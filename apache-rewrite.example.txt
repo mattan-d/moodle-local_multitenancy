@@ -1,0 +1,11 @@
+# Example Apache 2.4 rules when the web server rewrites tenant URLs to Moodle scripts
+# WITHOUT preserving /multitenancy/CODE in SCRIPT_NAME. In that case set MOODLE_TENANT
+# so bootstrap can still find the tenant (optional if REQUEST_URI still contains the path).
+#
+# Adjust paths to your Moodle document root. This is NOT applied automatically.
+
+# RewriteEngine On
+# RewriteRule ^multitenancy/([A-Za-z0-9_]+)/(.*)$ /$2 [E=MOODLE_TENANT:$1,QSA,L]
+
+# If you use an internal rewrite only (URI unchanged), you usually do NOT need MOODLE_TENANT;
+# local_multitenancy_bootstrap parses REQUEST_URI.
