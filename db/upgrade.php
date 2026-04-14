@@ -39,5 +39,24 @@ function xmldb_local_multitenancy_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026041400, 'local', 'multitenancy');
     }
 
+    if ($oldversion < 2026041500) {
+        $table = new xmldb_table('local_multitenancy_tenant');
+
+        $oldindex = new xmldb_index('host_uix', XMLDB_INDEX_UNIQUE, ['host']);
+        if ($dbman->index_exists($table, $oldindex)) {
+            $dbman->drop_index($table, $oldindex);
+        }
+
+        $newindex = new xmldb_index('host_ix', XMLDB_INDEX_NOTUNIQUE, ['host']);
+        if (!$dbman->index_exists($table, $newindex)) {
+            $dbman->add_index($table, $newindex);
+        }
+
+        $field = new xmldb_field('host', XMLDB_TYPE_CHAR, '255', null, null, null, null, 'shortcode');
+        $dbman->change_field_notnull($table, $field);
+
+        upgrade_plugin_savepoint(true, 2026041500, 'local', 'multitenancy');
+    }
+
     return true;
 }

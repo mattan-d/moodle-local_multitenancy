@@ -9,7 +9,7 @@
         <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
         <FIELD NAME="shortcode" TYPE="char" LENGTH="64" NOTNULL="true" SEQUENCE="false" COMMENT="Unique code for CLI/env"/>
         <FIELD NAME="name" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false"/>
-        <FIELD NAME="host" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="HTTP_HOST value (lowercase)"/>
+        <FIELD NAME="host" TYPE="char" LENGTH="255" NOTNULL="false" SEQUENCE="false" COMMENT="HTTP_HOST for host-based routing (optional)"/>
         <FIELD NAME="wwwroot" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false"/>
         <FIELD NAME="dataroot" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false"/>
         <FIELD NAME="dbhost" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false"/>
@@ -30,7 +30,7 @@
       </KEYS>
       <INDEXES>
         <INDEX NAME="shortcode_uix" UNIQUE="true" FIELDS="shortcode"/>
-        <INDEX NAME="host_uix" UNIQUE="true" FIELDS="host"/>
+        <INDEX NAME="host_ix" UNIQUE="false" FIELDS="host"/>
       </INDEXES>
     </TABLE>
   </TABLES>
