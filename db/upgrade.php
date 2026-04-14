@@ -44,5 +44,10 @@ function xmldb_local_multitenancy_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026041410, 'local', 'multitenancy');
     }
 
+    if ($oldversion < 2026041420) {
+        \local_multitenancy\gateway_manager::sync();
+        upgrade_plugin_savepoint(true, 2026041420, 'local', 'multitenancy');
+    }
+
     return true;
 }
