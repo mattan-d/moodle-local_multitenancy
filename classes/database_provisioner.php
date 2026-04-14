@@ -94,6 +94,74 @@ class database_provisioner {
     }
 
     /**
+     * Create a clean Moodle tenant database (no copied data) when DB is empty.
+     *
+     * @param \stdClass $tenant
+     * @return array{state:string, detail:string}
+     */
+    public static function provision_clean_if_empty(\stdClass $tenant): array {
+        global $CFG;
+
+        $tenantdbname = (string) ($tenant->dbname ?? '');
+        if ($tenantdbname === '') {
+            return ['state' => 'error', 'detail' => 'Empty tenant dbname'];
+        }
+        if ($tenantdbname === (string) $CFG->dbname) {
+            return ['state' => 'error', 'detail' => 'Tenant DB equals parent DB'];
+        }
+
+        $tenantconn = @new \mysqli(
+            (string) ($tenant->dbhost ?? ''),
+            (string) ($tenant->dbuser ?? ''),
+            (string) ($tenant->dbpass ?? ''),
+            $tenantdbname
+        );
+        if ($tenantconn->connect_errno) {
+            return ['state' => 'error', 'detail' => 'Tenant DB connect failed: ' . $tenantconn->connect_error];
+        }
+        $tablecount = self::count_tables($tenantconn, $tenantdbname);
+        $tenantconn->close();
+        if ($tablecount === null) {
+            return ['state' => 'error', 'detail' => 'Could not inspect tenant DB tables'];
+        }
+        if ($tablecount > 0) {
+            return ['state' => 'skipped_notempty', 'detail' => (string) $tablecount];
+        }
+
+        $shortcode = (string) ($tenant->shortcode ?? 'tenant');
+        $adminpass = self::generate_admin_password();
+        $adminemail = 'admin+' . preg_replace('/[^a-zA-Z0-9_-]+/', '', $shortcode) . '@example.invalid';
+        $fullname = trim((string) ($tenant->name ?? 'Tenant ' . $shortcode));
+        if ($fullname === '') {
+            $fullname = 'Tenant ' . $shortcode;
+        }
+        $shortname = substr(preg_replace('/\s+/', ' ', $fullname), 0, 100);
+
+        $cmdparts = [
+            'MOODLE_TENANT=' . escapeshellarg($shortcode),
+            escapeshellarg((string) PHP_BINARY),
+            escapeshellarg((string) ($CFG->dirroot . '/admin/cli/install_database.php')),
+            '--agree-license',
+            '--lang=' . escapeshellarg('en'),
+            '--adminuser=' . escapeshellarg('admin'),
+            '--adminpass=' . escapeshellarg($adminpass),
+            '--adminemail=' . escapeshellarg($adminemail),
+            '--fullname=' . escapeshellarg($fullname),
+            '--shortname=' . escapeshellarg($shortname),
+        ];
+
+        $output = [];
+        $exitcode = 0;
+        exec(implode(' ', $cmdparts) . ' 2>&1', $output, $exitcode);
+        if ($exitcode !== 0) {
+            $detail = trim(implode("\n", array_slice($output, 0, 8)));
+            return ['state' => 'error', 'detail' => ($detail !== '' ? $detail : 'install_database failed')];
+        }
+
+        return self::verify_after_clone($tenant, $tenantdbname);
+    }
+
+    /**
      * @param \stdClass $tenant
      * @param string $tenantdbname
      * @return array{ok:bool, detail:string}
@@ -320,6 +388,17 @@ class database_provisioner {
         $args[] = escapeshellarg('--password=' . $pass);
         $args[] = escapeshellarg($dbname);
         return $args;
+    }
+
+    /**
+     * @return string
+     */
+    private static function generate_admin_password(): string {
+        try {
+            return bin2hex(random_bytes(8)) . 'Aa1!';
+        } catch (\Throwable $e) {
+            return 'Temp' . mt_rand(100000, 999999) . 'Aa1!';
+        }
     }
 }
 

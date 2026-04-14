@@ -55,6 +55,7 @@ $string['dbseedmode'] = 'מצב נתוני התחלה לדייר';
 $string['dbseedmode_help'] = 'בחר האם להתחיל עם DB דייר נקי (נוצרת סכימה בלי העתקת נתונים) או לאתחל באמצעות העתקת נתונים מה־Moodle הראשי.';
 $string['dbseedmode_clean'] = 'יצירת דייר נקי (ללא העתקת נתונים)';
 $string['dbseedmode_copyparent'] = 'העתקת נתונים מהמודל הראשי';
+$string['dbseedcleanfallbackcopied'] = 'נבחר מצב דייר נקי עבור "{$a}", אבל DB דייר ריק לא יכול לעלות את Moodle. לכן הועתקו אוטומטית נתוני המודל הראשי כדי שהדייר יהיה שמיש.';
 $string['dbseedcleanselected'] = 'DB הדייר "{$a}" נוצר נקי (ללא העתקת נתונים מהראשי).';
 $string['dbprovisioned'] = 'DB הדייר "{$a}" אותחל מתוך DB האתר הראשי.';
 $string['dbprovisionskippednotempty'] = 'DB הדייר "{$a}" כבר מכיל טבלאות, לכן האתחול דולג.';

@@ -193,7 +193,17 @@ if ($data = $form->get_data()) {
             \core\notification::error(get_string('dbprovisionfailed', 'local_multitenancy', $result['detail']));
         }
     } else {
-        \core\notification::info(get_string('dbseedcleanselected', 'local_multitenancy', $generateddb['dbname']));
+        $tenant = $DB->get_record('local_multitenancy_tenant', ['shortcode' => $row->shortcode], '*', MUST_EXIST);
+        $result = \local_multitenancy\database_provisioner::provision_if_empty($tenant);
+        if ($result['state'] === 'provisioned') {
+            \core\notification::warning(get_string('dbseedcleanfallbackcopied', 'local_multitenancy', $tenant->dbname));
+        } else if ($result['state'] === 'skipped_notempty') {
+            \core\notification::info(get_string('dbseedcleanselected', 'local_multitenancy', $generateddb['dbname']));
+        } else if ($result['state'] === 'skipped_unsupported') {
+            \core\notification::warning(get_string('dbprovisionskippedunsupported', 'local_multitenancy', $tenant->dbtype));
+        } else {
+            \core\notification::error(get_string('dbprovisionfailed', 'local_multitenancy', $result['detail']));
+        }
     }
 
     \local_multitenancy\gateway_manager::sync();

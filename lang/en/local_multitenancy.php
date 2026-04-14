@@ -55,6 +55,7 @@ $string['dbseedmode'] = 'Initial tenant data mode';
 $string['dbseedmode_help'] = 'Choose whether the tenant should start as a clean Moodle database (schema created, no copied data) or be initialized by copying the parent Moodle data.';
 $string['dbseedmode_clean'] = 'Create clean tenant (no copied data)';
 $string['dbseedmode_copyparent'] = 'Copy data from parent Moodle';
+$string['dbseedcleanfallbackcopied'] = 'Clean mode requested for "{$a}", but an empty tenant DB cannot boot Moodle. Parent data was copied automatically to make the tenant usable.';
 $string['dbseedcleanselected'] = 'Tenant database "{$a}" was created as clean (no data copied from parent).';
 $string['dbprovisioned'] = 'Tenant database "{$a}" was initialized from the parent database.';
 $string['dbprovisionskippednotempty'] = 'Tenant database "{$a}" already contains tables, so initialization was skipped.';
