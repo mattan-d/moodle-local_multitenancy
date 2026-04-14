@@ -207,12 +207,16 @@ class database_provisioner {
             $fields = $datares->fetch_fields();
             $columns = [];
             $courseindexes = [];
+            $categoryindexes = [];
             $idindex = null;
             foreach ($fields as $field) {
                 $columns[] = '`' . str_replace('`', '``', (string) $field->name) . '`';
                 $fname = (string) $field->name;
                 if ($fname === 'course' || $fname === 'courseid') {
                     $courseindexes[] = count($columns) - 1;
+                }
+                if ($fname === 'category' || $fname === 'categoryid') {
+                    $categoryindexes[] = count($columns) - 1;
                 }
                 if ($fname === 'id') {
                     $idindex = count($columns) - 1;
@@ -223,7 +227,15 @@ class database_provisioner {
             $batch = [];
             $batchsize = 100;
             while ($row = $datares->fetch_row()) {
-                if (!self::should_copy_row($table, $tenant->dbprefix ?? 'mdl_', $row, $courseindexes, $idindex, $copycourses)) {
+                if (!self::should_copy_row(
+                    $table,
+                    $tenant->dbprefix ?? 'mdl_',
+                    $row,
+                    $courseindexes,
+                    $categoryindexes,
+                    $idindex,
+                    $copycourses
+                )) {
                     continue;
                 }
                 $values = [];
@@ -270,6 +282,7 @@ class database_provisioner {
      * @param string $prefix
      * @param array $row
      * @param int[] $courseindexes
+     * @param int[] $categoryindexes
      * @param int|null $idindex
      * @param bool $copycourses
      * @return bool
@@ -279,6 +292,7 @@ class database_provisioner {
         string $prefix,
         array $row,
         array $courseindexes,
+        array $categoryindexes,
         ?int $idindex,
         bool $copycourses
     ): bool {
@@ -289,7 +303,15 @@ class database_provisioner {
         if ($short === 'course' && $idindex !== null) {
             return isset($row[$idindex]) && (int) $row[$idindex] <= 1;
         }
+        if ($short === 'course_categories' && $idindex !== null) {
+            return isset($row[$idindex]) && (int) $row[$idindex] <= 1;
+        }
         foreach ($courseindexes as $ix) {
+            if (isset($row[$ix]) && $row[$ix] !== null && (int) $row[$ix] > 1) {
+                return false;
+            }
+        }
+        foreach ($categoryindexes as $ix) {
             if (isset($row[$ix]) && $row[$ix] !== null && (int) $row[$ix] > 1) {
                 return false;
             }
