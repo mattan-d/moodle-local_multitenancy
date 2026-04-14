@@ -75,6 +75,10 @@ class database_provisioner {
         if ($copycourses && self::has_command('mysqldump') && self::has_command('mysql')) {
             $cliresult = self::clone_via_cli($tenant, $tenantdbname);
             if ($cliresult['ok']) {
+                $adminreset = self::reset_to_initial_admin($tenant, $tenantdbname);
+                if ($adminreset['state'] !== 'ok') {
+                    return ['state' => 'error', 'detail' => $adminreset['detail']];
+                }
                 return self::verify_after_clone($tenant, $tenantdbname);
             }
             $clidetail = $cliresult['detail'];
@@ -88,6 +92,11 @@ class database_provisioner {
                 $detail = 'CLI clone failed (' . $clidetail . '); PHP fallback failed (' . $detail . ')';
             }
             return ['state' => 'error', 'detail' => $detail];
+        }
+
+        $adminreset = self::reset_to_initial_admin($tenant, $tenantdbname);
+        if ($adminreset['state'] !== 'ok') {
+            return ['state' => 'error', 'detail' => $adminreset['detail']];
         }
 
         return self::verify_after_clone($tenant, $tenantdbname);
@@ -342,6 +351,52 @@ class database_provisioner {
         }
 
         return ['state' => 'provisioned', 'detail' => (string) $newcount];
+    }
+
+    /**
+     * Keep only guest + one initial admin user in tenant DB.
+     *
+     * @param \stdClass $tenant
+     * @param string $tenantdbname
+     * @return array{state:string, detail:string}
+     */
+    private static function reset_to_initial_admin(\stdClass $tenant, string $tenantdbname): array {
+        $prefix = (string) ($tenant->prefix ?? 'mdl_');
+        $conn = @new \mysqli(
+            (string) ($tenant->dbhost ?? ''),
+            (string) ($tenant->dbuser ?? ''),
+            (string) ($tenant->dbpass ?? ''),
+            $tenantdbname
+        );
+        if ($conn->connect_errno) {
+            return ['state' => 'error', 'detail' => 'Tenant DB reconnect failed for admin reset'];
+        }
+
+        $usertable = '`' . str_replace('`', '``', $prefix . 'user') . '`';
+        $configtable = '`' . str_replace('`', '``', $prefix . 'config') . '`';
+        $sessiontable = '`' . str_replace('`', '``', $prefix . 'sessions') . '`';
+        $hash = $conn->real_escape_string(password_hash('admin123!', PASSWORD_DEFAULT));
+
+        if (!$conn->query("DELETE FROM {$usertable} WHERE id > 2")) {
+            $err = $conn->error;
+            $conn->close();
+            return ['state' => 'error', 'detail' => 'Failed to clean copied users: ' . $err];
+        }
+        if (!$conn->query("UPDATE {$usertable} SET auth='manual', username='admin', password='{$hash}', deleted=0, suspended=0, confirmed=1 WHERE id=2")) {
+            $err = $conn->error;
+            $conn->close();
+            return ['state' => 'error', 'detail' => 'Failed to reset admin user: ' . $err];
+        }
+        // Keep tenant admin ownership explicit.
+        if (!$conn->query("UPDATE {$configtable} SET value='2' WHERE name='siteadmins'")) {
+            $err = $conn->error;
+            $conn->close();
+            return ['state' => 'error', 'detail' => 'Failed to set siteadmins: ' . $err];
+        }
+        // Force fresh login after provisioning.
+        $conn->query("TRUNCATE TABLE {$sessiontable}");
+        $conn->close();
+        return ['state' => 'ok', 'detail' => ''];
     }
 
     /**
