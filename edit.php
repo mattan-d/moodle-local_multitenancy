@@ -44,6 +44,18 @@ $PAGE->set_heading($title);
 
 $returnurl = new moodle_url('/local/multitenancy/manage.php');
 
+$buildtenantvalues = static function(string $shortcode) use ($CFG): array {
+    $code = trim($shortcode);
+    $lower = \core_text::strtolower($code);
+    $basewww = rtrim((string) $CFG->wwwroot, '/');
+    $basedataroot = rtrim((string) $CFG->dataroot, "/\\\0");
+    return [
+        'host' => $lower . '.tenant.local',
+        'wwwroot' => $basewww . '/local/multitenancy/users/' . rawurlencode($code),
+        'dataroot' => $basedataroot . '/multitenancy/tenants/' . $code,
+    ];
+};
+
 $form = new \local_multitenancy\form\tenant_edit_form(null, ['existing' => $record]);
 
 if ($record) {
@@ -68,10 +80,11 @@ if ($data = $form->get_data()) {
     $now = time();
     $row = new stdClass();
     $row->shortcode = trim($data->shortcode);
+    $generated = $buildtenantvalues($row->shortcode);
     $row->name = trim($data->name);
-    $row->host = core_text::strtolower(trim($data->host));
-    $row->wwwroot = trim($data->wwwroot);
-    $row->dataroot = rtrim(trim($data->dataroot), "/\\\0");
+    $row->host = $generated['host'];
+    $row->wwwroot = $generated['wwwroot'];
+    $row->dataroot = $generated['dataroot'];
     $row->dbhost = trim($data->dbhost);
     $row->dbname = trim($data->dbname);
     $row->dbuser = trim($data->dbuser);
@@ -101,6 +114,10 @@ if ($data = $form->get_data()) {
         $row->timecreated = $now;
         $row->timemodified = $now;
         $DB->insert_record('local_multitenancy_tenant', $row);
+    }
+
+    if (!is_dir($row->dataroot) && !make_writable_directory($row->dataroot, false)) {
+        \core\notification::warning(get_string('datarootautocreatefailed', 'local_multitenancy', $row->dataroot));
     }
 
     if (!empty($data->initdbfromparent)) {

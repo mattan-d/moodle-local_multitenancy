@@ -259,6 +259,52 @@ function local_multitenancy_wwwroot_cookie_is_safe(string $wwwroot): bool {
 }
 
 /**
+ * @param string $requesturi
+ * @return bool
+ */
+function local_multitenancy_request_is_logout(string $requesturi): bool {
+    $path = parse_url($requesturi, PHP_URL_PATH);
+    return is_string($path) && (bool) preg_match('#/login/logout\.php$#', $path);
+}
+
+/**
+ * Clear tenant selection + tenant session cookies on logout,
+ * so the user returns to the parent Moodle context.
+ *
+ * @return void
+ */
+function local_multitenancy_clear_tenant_cookies(): void {
+    if (headers_sent()) {
+        return;
+    }
+    $secure = local_multitenancy_request_is_https();
+    $opts = [
+        'expires' => time() - 3600,
+        'path' => '/',
+        'secure' => $secure,
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ];
+    if (PHP_VERSION_ID >= 70300) {
+        setcookie(LOCAL_MULTITENANCY_COOKIE, '', $opts);
+        setcookie(LOCAL_MULTITENANCY_WWWROOT_COOKIE, '', $opts);
+        foreach (array_keys($_COOKIE) as $cookiename) {
+            if (strpos((string) $cookiename, 'MoodleSessionMT_') === 0) {
+                setcookie((string) $cookiename, '', $opts);
+            }
+        }
+    } else {
+        setcookie(LOCAL_MULTITENANCY_COOKIE, '', time() - 3600, '/', '', $secure, true);
+        setcookie(LOCAL_MULTITENANCY_WWWROOT_COOKIE, '', time() - 3600, '/', '', $secure, true);
+        foreach (array_keys($_COOKIE) as $cookiename) {
+            if (strpos((string) $cookiename, 'MoodleSessionMT_') === 0) {
+                setcookie((string) $cookiename, '', time() - 3600, '/', '', $secure, true);
+            }
+        }
+    }
+}
+
+/**
  * @param stdClass $cfg
  * @param array $tenant
  * @param bool $setcookiefromentry
@@ -401,6 +447,10 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
     }
 
     $requesturi = $_SERVER['REQUEST_URI'] ?? '';
+    if (local_multitenancy_request_is_logout($requesturi)) {
+        local_multitenancy_clear_tenant_cookies();
+        return;
+    }
     if (local_multitenancy_request_is_parent_admin($requesturi)) {
         return;
     }
