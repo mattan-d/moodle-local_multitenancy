@@ -32,26 +32,6 @@ class stub_manager {
     public const COOKIE_NAME = 'local_multitenancy_sc';
 
     /**
-     * Clear tenant browser cookie (after config.php is loaded).
-     *
-     * @return void
-     */
-    public static function clear_browser_cookie(): void {
-        if (PHP_VERSION_ID >= 70300) {
-            setcookie(self::COOKIE_NAME, '', [
-                'expires' => time() - 3600,
-                'path' => '/',
-                'secure' => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' && $_SERVER['HTTPS'] !== 'OFF'),
-                'httponly' => true,
-                'samesite' => 'Lax',
-            ]);
-        } else {
-            setcookie(self::COOKIE_NAME, '', time() - 3600, '/', '', false, true);
-        }
-        unset($_COOKIE[self::COOKIE_NAME]);
-    }
-
-    /**
      * @param string $shortcode
      * @return bool
      */
