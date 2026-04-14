@@ -34,7 +34,7 @@ $string['shortcode_help'] = 'מזהה קצר וייחודי לשימוש ב־CLI
 $string['host'] = 'מארח HTTP (Host)';
 $string['host_help'] = 'לדייר לפי תת־דומיין: ערך Host מדויק (למשל school1.example.com). לדיירים לפי נתיב על אותו דומיין כמו האב, השתמש במארח־מקום ייחודי לכל דייר (למשל mattan.path.local) שלא מגיע בקשות אמיתיות — הזיהוי הוא דרך /local/multitenancy/users/{קוד}/ ועוגייה.';
 $string['wwwroot'] = 'כתובת wwwroot של הדייר';
-$string['wwwroot_help'] = 'בשימוש בנתיבי gateway על אותו שם מארח ציבורי, הגדר לאותה כתובת כמו אתר האב (למשל https://example.com). לדייר לפי תת־דומיין אפשר כתובת מלאה משלו.';
+$string['wwwroot_help'] = 'כתובת בסיס ציבורית של מודל (למשל https://example.com) — לא נתיב ה־gateway ‎/local/multitenancy/users/…‎. לדיירים לפי נתיב על אותו מארח: אותה בסיס כמו האתר האב. לדייר לפי תת־דומיין אפשר כתובת מלאה משלו.';
 $string['gatewayurl'] = 'כתובת Gateway';
 $string['gatewayexplain'] = 'לכל דייר מופעל נוצרת תיקייה local/multitenancy/users/{קוד דייר}/ כך שכתובות כמו .../users/mattan/ עובדות בלי rewrite ב־Apache. הכניסה מגדירה עוגיות (קוד דייר + wwwroot ציבורי) כדי שבדיקות ה־URL של Moodle יתאימו ל־SCRIPT_NAME. /local/multitenancy/leave.php מנקה עוגיות וחוזר לאתר האב. לאחר שינוי קוד דייר יש לשמור דייר או לבנות מחדש את ה־registry.';
 $string['dataroot'] = 'נתיב moodledata של הדייר';
@@ -68,22 +68,27 @@ $string['configsnippet_title'] = 'קטע ל־config.php';
 $string['configsnippet_desc'] = 'הוסף ב־config.php לפני require_once(__DIR__ . \'/lib/setup.php\'). אל תשתמש ב־$CFG->dirroot בשורות האלה: מודל מגדיר אותו רק בתוך setup.php. השתמש ב־__DIR__ לנתיב ל־bootstrap. לדוגמה: if (!defined(\'MULTITENANCY_REGISTRY_DIR\')) { define(\'MULTITENANCY_REGISTRY_DIR\', $CFG->dataroot . \'/multitenancy\'); } require_once(__DIR__ . \'/local/multitenancy/bootstrap.php\'); local_multitenancy_bootstrap($CFG); ודא ש־MULTITENANCY_REGISTRY_DIR תואם להגדרת "תיקיית registry" בתוסף. ב־CLI: export MOODLE_TENANT=קוד_הדייר';
 $string['cli_diag_help'] = 'אבחון gateway לריבוי דיירים (דף לבן).
 
-שימוש: php local/multitenancy/cli/diagnose_gateway.php --shortcode=CODE
-   או: php local/multitenancy/cli/diagnose_gateway.php -s CODE
+הרץ משורש Moodle, למשל:
+  cd /path/to/moodle
+  php local/multitenancy/cli/diagnose_gateway.php --shortcode=CODE
+  php local/multitenancy/cli/diagnose_gateway.php -s CODE
 
-בודק: MULTITENANCY_REGISTRY_DIR, registry.php, רשומת דייר, wwwroot, dataroot, קובץ gateway, חיבור DB (משפחת mysqli), כתובת צפויה בדפדפן.
+בודק: MULTITENANCY_REGISTRY_DIR, registry.php, רשומת דייר, wwwroot, dataroot, קובץ gateway, חיבור DB, כתובת בדפדפן.
 
 ';
 $string['cli_diag_invalidshortcode'] = 'קוד דייר לא תקין: {$a}';
 $string['cli_diag_registrydirundefined'] = 'MULTITENANCY_REGISTRY_DIR לא מוגדר ב־config.php.';
-$string['cli_diag_registryfilenotreadable'] = 'לא ניתן לקרוא את registry: {$a}';
+$string['cli_diag_registrydirmissing'] = 'תיקיית ה־registry לא קיימת: {$a}. צור אותה (mkdir), תן הרשאות לשרת האינטרנט, ואז במודל שמור דייר או בנה מחדש registry.';
+$string['cli_diag_registryfilenotfound'] = 'אין עדיין registry.php: {$a}. במודל: ניהול האתר → תוספים מקומיים → Multitenancy — הגדר "תיקיית registry" לתיקייה זו, הוסף דיירים, ואז שמור או בנייה מחדש.';
+$string['cli_diag_registryfilenotreadable'] = 'registry.php קיים אבל לא ניתן לקריאה: {$a}. תקן הרשאות (chmod/chown) ל־CLI ולמשתמש שרת האינטרנט.';
 $string['cli_diag_registryfileok'] = 'קובץ registry תקין: {$a}';
 $string['cli_diag_registryempty'] = 'registry.php ריק או לא מערך.';
 $string['cli_diag_tenantnotinregistry'] = 'אין דייר עם הקוד "{$a}" ב־registry — הוסף בניהול והרץ שמירה או בנייה מחדש.';
 $string['cli_diag_tenantdisabled'] = 'הדייר "{$a}" מושבת ב־registry.';
 $string['cli_diag_tenantenabled'] = 'הדייר "{$a}" מופעל.';
 $string['cli_diag_wwwrootinvalid'] = 'wwwroot ב־registry לא URL מלא (ערך: "{$a}").';
-$string['cli_diag_wwwrootok'] = 'wwwroot תקין: {$a}';
+$string['cli_diag_wwwrootok'] = 'wwwroot תקין (בסיס אפקטיבי): {$a}';
+$string['cli_diag_wwwrootgatewaystripped'] = 'ב־registry ה־wwwroot היה "{$a->from}" (רק נתיב gateway); התוסף מנרמל ל־"{$a->to}". עדיף לשמור בדייר את כתובת בסיס האתר האמיתית.';
 $string['cli_diag_datarootnotabsolute'] = 'dataroot לא נתיב מוחלט (ערך: "{$a}").';
 $string['cli_diag_datarootabsolute'] = 'dataroot מוחלט: {$a}';
 $string['cli_diag_datarootmissing'] = 'תיקיית dataroot לא קיימת: {$a}';

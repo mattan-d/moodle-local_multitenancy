@@ -64,11 +64,12 @@ class registry_writer {
                     $dboptions = $decoded;
                 }
             }
+            $wwwroot = \local_multitenancy_normalize_public_wwwroot((string) $r->wwwroot);
             $map[$host] = [
                 'shortcode' => $r->shortcode,
                 'name' => $r->name,
                 'enabled' => (int) $r->enabled,
-                'wwwroot' => $r->wwwroot,
+                'wwwroot' => $wwwroot,
                 'dataroot' => $r->dataroot,
                 'dbhost' => $r->dbhost,
                 'dbname' => $r->dbname,

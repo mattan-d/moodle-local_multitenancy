@@ -58,7 +58,25 @@ class gateway_diagnostic {
             return $out;
         }
 
-        $registryfile = rtrim(MULTITENANCY_REGISTRY_DIR, '/\\') . '/registry.php';
+        $registrydir = rtrim(MULTITENANCY_REGISTRY_DIR, '/\\');
+        $registryfile = $registrydir . '/registry.php';
+
+        if (!is_dir($registrydir)) {
+            $out[] = [
+                'level' => self::LEVEL_ERROR,
+                'key' => 'registrydirmissing',
+                'detail' => $registrydir,
+            ];
+            return $out;
+        }
+        if (!file_exists($registryfile)) {
+            $out[] = [
+                'level' => self::LEVEL_ERROR,
+                'key' => 'registryfilenotfound',
+                'detail' => $registryfile,
+            ];
+            return $out;
+        }
         if (!is_readable($registryfile)) {
             $out[] = [
                 'level' => self::LEVEL_ERROR,
@@ -116,12 +134,13 @@ class gateway_diagnostic {
             ];
         }
 
-        $wwwroot = isset($tenant['wwwroot']) ? (string) $tenant['wwwroot'] : '';
+        $wwwrootraw = isset($tenant['wwwroot']) ? (string) $tenant['wwwroot'] : '';
+        $wwwroot = \local_multitenancy_normalize_public_wwwroot($wwwrootraw);
         if (!preg_match('#\Ahttps?://.#iu', $wwwroot)) {
             $out[] = [
                 'level' => self::LEVEL_ERROR,
                 'key' => 'wwwrootinvalid',
-                'detail' => $wwwroot,
+                'detail' => $wwwrootraw,
             ];
         } else {
             $out[] = [
@@ -129,6 +148,16 @@ class gateway_diagnostic {
                 'key' => 'wwwrootok',
                 'detail' => $wwwroot,
             ];
+            if (rtrim($wwwrootraw, '/') !== rtrim($wwwroot, '/')) {
+                $out[] = [
+                    'level' => self::LEVEL_WARN,
+                    'key' => 'wwwrootgatewaystripped',
+                    'detail' => (object) [
+                        'from' => $wwwrootraw,
+                        'to' => $wwwroot,
+                    ],
+                ];
+            }
         }
 
         $dataroot = isset($tenant['dataroot']) ? (string) $tenant['dataroot'] : '';

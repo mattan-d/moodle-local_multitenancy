@@ -111,6 +111,32 @@ function local_multitenancy_is_valid_public_wwwroot(string $wwwroot): bool {
 }
 
 /**
+ * Strip /local/multitenancy/users/{code} from wwwroot — that URL is only an entry point, not $CFG->wwwroot.
+ * Moodle must use the real site base (e.g. https://host or https://host/moodle).
+ *
+ * @param string $url
+ * @return string
+ */
+function local_multitenancy_normalize_public_wwwroot(string $url): string {
+    $url = rtrim(trim($url), '/');
+    if ($url === '' || !preg_match('#\Ahttps?://#iu', $url)) {
+        return $url;
+    }
+    $parts = parse_url($url);
+    if (empty($parts['scheme']) || empty($parts['host'])) {
+        return $url;
+    }
+    $path = isset($parts['path']) ? $parts['path'] : '';
+    $newpath = preg_replace('#/local/multitenancy/users/[a-zA-Z0-9_-]+$#', '', $path);
+    if ($newpath === $path) {
+        return $url;
+    }
+    $newpath = rtrim($newpath, '/');
+    $port = isset($parts['port']) ? ':' . (int) $parts['port'] : '';
+    return rtrim($parts['scheme'] . '://' . $parts['host'] . $port . ($newpath === '' ? '' : $newpath), '/');
+}
+
+/**
  * @param string $pathprefix Path on server before /local/multitenancy/... (e.g. /moodle or empty).
  * @return string|null
  */
@@ -248,6 +274,7 @@ function local_multitenancy_apply_tenant(stdClass $cfg, array $tenant, bool $set
     }
     if ($publicwww === null && !empty($_COOKIE[LOCAL_MULTITENANCY_WWWROOT_COOKIE])) {
         $decoded = rawurldecode((string) $_COOKIE[LOCAL_MULTITENANCY_WWWROOT_COOKIE]);
+        $decoded = local_multitenancy_normalize_public_wwwroot($decoded);
         if ($decoded !== '' && local_multitenancy_wwwroot_cookie_is_safe($decoded)) {
             $publicwww = rtrim($decoded, '/');
         }
@@ -255,12 +282,17 @@ function local_multitenancy_apply_tenant(stdClass $cfg, array $tenant, bool $set
     if ($publicwww === null && $setcookiefromentry) {
         $publicwww = local_multitenancy_build_public_wwwroot_from_prefix('');
     }
-    if ($publicwww === null && !empty($tenant['wwwroot']) && local_multitenancy_is_valid_public_wwwroot((string) $tenant['wwwroot'])) {
-        $publicwww = rtrim((string) $tenant['wwwroot'], '/');
+    if ($publicwww === null && !empty($tenant['wwwroot'])) {
+        $tw = local_multitenancy_normalize_public_wwwroot((string) $tenant['wwwroot']);
+        if (local_multitenancy_is_valid_public_wwwroot($tw)) {
+            $publicwww = rtrim($tw, '/');
+        }
     }
     if ($publicwww !== null) {
         $cfg->wwwroot = $publicwww;
     }
+
+    $cfg->wwwroot = local_multitenancy_normalize_public_wwwroot((string) $cfg->wwwroot);
 
     if (!local_multitenancy_is_valid_public_wwwroot((string) $cfg->wwwroot)) {
         local_multitenancy_abort_bad_tenant_config(
