@@ -35,6 +35,43 @@ define('LOCAL_MULTITENANCY_COOKIE', 'local_mt_sc');
 define('LOCAL_MULTITENANCY_WWWROOT_COOKIE', 'local_mt_wr');
 
 /**
+ * Whether the current request is served over HTTPS (incl. common reverse-proxy / MAMP cases).
+ *
+ * @return bool
+ */
+function local_multitenancy_request_is_https(): bool {
+    if (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off') {
+        return true;
+    }
+    if (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) &&
+            strtolower((string) $_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https') {
+        return true;
+    }
+    if (!empty($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443) {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Stop bootstrap when the gateway URL names a tenant that is missing or disabled in registry.php.
+ *
+ * @param string $code
+ * @return void
+ */
+function local_multitenancy_abort_unknown_gateway_tenant(string $code): void {
+    if (!headers_sent()) {
+        http_response_code(404);
+        header('Content-Type: text/plain; charset=UTF-8');
+    }
+    echo "Multitenancy: no enabled tenant with code \"" . $code . "\" in registry.\n\n";
+    echo "Add the tenant in Site administration → Multitenancy, then save or rebuild registry.\n";
+    echo "(עברית) הוסף את הדייר בניהול האתר, ואז שמור או בנה מחדש את registry.\n\n";
+    echo "Registry file: " . (defined('MULTITENANCY_REGISTRY_DIR') ? rtrim(MULTITENANCY_REGISTRY_DIR, '/\\') . '/registry.php' : '(not set)') . "\n";
+    exit(1);
+}
+
+/**
  * @param string $requesturi
  * @return bool True if this request must use parent site config only.
  */
@@ -88,7 +125,7 @@ function local_multitenancy_gateway_derived_wwwroot(string $shortcode): ?string 
         return null;
     }
     $pathprefix = $pos > 0 ? substr($script, 0, $pos) : '';
-    $https = !empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off';
+    $https = local_multitenancy_request_is_https();
     $scheme = $https ? 'https' : 'http';
     $host = $_SERVER['HTTP_HOST'] ?? '';
     if ($host === '') {
@@ -160,7 +197,7 @@ function local_multitenancy_apply_tenant(stdClass $cfg, array $tenant, bool $set
     }
 
     if ($setcookiefromentry && !headers_sent()) {
-        $secure = !empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off';
+        $secure = local_multitenancy_request_is_https();
         $opts = [
             'expires' => 0,
             'path' => '/',
@@ -229,16 +266,19 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
     $tenant = null;
     $setcookie = false;
 
-    // Path gateways (/local/multitenancy/users/{shortcode}/) and cookie — before HTTP_HOST so many
-    // tenants can share the same public host as the parent.
+    // Gateway URL always names a tenant; if missing from registry, abort (do not load parent Moodle
+    // with a gateway SCRIPT_NAME — that yields a blank page in initialise_fullme()).
     if (defined('LOCAL_MULTITENANCY_ENTRY_SHORTCODE')) {
         $code = (string) LOCAL_MULTITENANCY_ENTRY_SHORTCODE;
-        if ($code !== '' && preg_match('/^[a-zA-Z0-9_-]+$/', $code)) {
-            $candidate = local_multitenancy_registry_row_by_shortcode($map, $code);
-            if ($candidate && !empty($candidate['enabled'])) {
-                $tenant = $candidate;
-                $setcookie = true;
-            }
+        if ($code === '' || !preg_match('/^[a-zA-Z0-9_-]+$/', $code)) {
+            local_multitenancy_abort_unknown_gateway_tenant($code !== '' ? $code : '(invalid)');
+        }
+        $candidate = local_multitenancy_registry_row_by_shortcode($map, $code);
+        if ($candidate && !empty($candidate['enabled'])) {
+            $tenant = $candidate;
+            $setcookie = true;
+        } else {
+            local_multitenancy_abort_unknown_gateway_tenant($code);
         }
     }
 

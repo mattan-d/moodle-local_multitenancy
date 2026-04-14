@@ -26,7 +26,8 @@ require_once(__DIR__ . '/../../config.php');
 
 use local_multitenancy\gateway_manager;
 
-$secure = is_https();
+$secure = function_exists('local_multitenancy_request_is_https') ?
+    local_multitenancy_request_is_https() : is_https();
 
 if (PHP_VERSION_ID >= 70300) {
     $opts = [
