@@ -132,7 +132,7 @@ class tenant_edit_form extends \moodleform {
         }
 
         if (!empty($data['host'])) {
-            $host = core_text::strtolower($data['host']);
+            $host = \core_text::strtolower($data['host']);
             $params = ['host' => $host];
             $select = 'host = :host';
             if (!empty($data['id'])) {
