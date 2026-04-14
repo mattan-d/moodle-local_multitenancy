@@ -90,6 +90,8 @@ class registry_writer {
         }
         @chmod($target, 0660);
 
+        gateway_manager::sync();
+
         return true;
     }
 }

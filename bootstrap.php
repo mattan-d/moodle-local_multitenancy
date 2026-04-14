@@ -20,10 +20,91 @@
  * Define MULTITENANCY_REGISTRY_DIR in config.php to the directory that holds
  * registry.php (written by the plugin from the parent site).
  *
+ * Tenant resolution order (web): HTTP_HOST map, then gateway entry constant,
+ * then cookie (same host, path-style URLs under /local/multitenancy/users/{code}/).
+ * Parent (hub) admin URLs skip tenant overrides.
+ *
  * @package    local_multitenancy
  * @copyright  2026
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
+
+/** Cookie name for sticky tenant when using path gateways (must match gateway_manager). */
+define('LOCAL_MULTITENANCY_COOKIE', 'local_mt_sc');
+
+/**
+ * @param string $requesturi
+ * @return bool True if this request must use parent site config only.
+ */
+function local_multitenancy_request_is_parent_admin(string $requesturi): bool {
+    $path = parse_url($requesturi, PHP_URL_PATH);
+    if (!is_string($path) || $path === '') {
+        return false;
+    }
+    if (preg_match('#/(?:install|upgrade)\.php$#', $path)) {
+        return true;
+    }
+    if (strpos($path, '/admin/') !== false || preg_match('#/admin\.php$#', $path)) {
+        return true;
+    }
+    if (preg_match('#/local/multitenancy/(?:manage|edit|delete)\.php#', $path)) {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * @param array $map registry.php host => tenant row
+ * @param string $shortcode
+ * @return array|null
+ */
+function local_multitenancy_registry_row_by_shortcode(array $map, string $shortcode): ?array {
+    foreach ($map as $row) {
+        if (!empty($row['shortcode']) && $row['shortcode'] === $shortcode) {
+            return $row;
+        }
+    }
+    return null;
+}
+
+/**
+ * @param stdClass $cfg
+ * @param array $tenant
+ * @param bool $setcookiefromentry
+ * @return void
+ */
+function local_multitenancy_apply_tenant(stdClass $cfg, array $tenant, bool $setcookiefromentry): void {
+    $stringfields = ['wwwroot', 'dataroot', 'dbhost', 'dbname', 'dbuser', 'dbtype', 'dblibrary'];
+    foreach ($stringfields as $field) {
+        if (!empty($tenant[$field])) {
+            $cfg->{$field} = $tenant[$field];
+        }
+    }
+    if (!empty($tenant['prefix'])) {
+        $cfg->prefix = $tenant['prefix'];
+    }
+    if (array_key_exists('dbpass', $tenant)) {
+        $cfg->dbpass = (string) $tenant['dbpass'];
+    }
+    if (!empty($tenant['dboptions']) && is_array($tenant['dboptions'])) {
+        $cfg->dboptions = $tenant['dboptions'];
+    }
+
+    if ($setcookiefromentry && !headers_sent()) {
+        $secure = !empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off';
+        if (PHP_VERSION_ID >= 70300) {
+            setcookie(LOCAL_MULTITENANCY_COOKIE, (string) $tenant['shortcode'], [
+                'expires' => 0,
+                'path' => '/',
+                'secure' => $secure,
+                'httponly' => true,
+                'samesite' => 'Lax',
+            ]);
+        } else {
+            setcookie(LOCAL_MULTITENANCY_COOKIE, (string) $tenant['shortcode'], 0, '/', '', $secure, true);
+        }
+    }
+}
 
 /**
  * Apply tenant overrides to the in-flight $CFG object.
@@ -50,27 +131,56 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
         return;
     }
 
-    $tenant = null;
+    $iscli = (defined('CLI_SCRIPT') && CLI_SCRIPT) || (PHP_SAPI === 'cli');
 
-    if (defined('CLI_SCRIPT') && CLI_SCRIPT) {
+    if ($iscli) {
         $code = getenv('MOODLE_TENANT');
-        if (is_string($code) && $code !== '') {
-            foreach ($map as $entry) {
-                if (!empty($entry['shortcode']) && $entry['shortcode'] === $code) {
-                    $tenant = $entry;
-                    break;
-                }
+        if (!is_string($code) || $code === '') {
+            return;
+        }
+        $tenant = local_multitenancy_registry_row_by_shortcode($map, $code);
+        if ($tenant && !empty($tenant['enabled'])) {
+            local_multitenancy_apply_tenant($cfg, $tenant, false);
+        }
+        return;
+    }
+
+    $requesturi = $_SERVER['REQUEST_URI'] ?? '';
+    if (local_multitenancy_request_is_parent_admin($requesturi)) {
+        return;
+    }
+
+    $tenant = null;
+    $setcookie = false;
+
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    if (function_exists('mb_strtolower')) {
+        $host = mb_strtolower($host, 'UTF-8');
+    } else {
+        $host = strtolower($host);
+    }
+    if ($host !== '' && isset($map[$host])) {
+        $tenant = $map[$host];
+    }
+
+    if (!$tenant && defined('LOCAL_MULTITENANCY_ENTRY_SHORTCODE')) {
+        $code = (string) LOCAL_MULTITENANCY_ENTRY_SHORTCODE;
+        if ($code !== '' && preg_match('/^[a-zA-Z0-9_-]+$/', $code)) {
+            $candidate = local_multitenancy_registry_row_by_shortcode($map, $code);
+            if ($candidate && !empty($candidate['enabled'])) {
+                $tenant = $candidate;
+                $setcookie = true;
             }
         }
-    } else {
-        $host = $_SERVER['HTTP_HOST'] ?? '';
-        if (function_exists('mb_strtolower')) {
-            $host = mb_strtolower($host, 'UTF-8');
-        } else {
-            $host = strtolower($host);
-        }
-        if ($host !== '' && isset($map[$host])) {
-            $tenant = $map[$host];
+    }
+
+    if (!$tenant && !empty($_COOKIE[LOCAL_MULTITENANCY_COOKIE])) {
+        $code = (string) $_COOKIE[LOCAL_MULTITENANCY_COOKIE];
+        if (preg_match('/^[a-zA-Z0-9_-]+$/', $code)) {
+            $candidate = local_multitenancy_registry_row_by_shortcode($map, $code);
+            if ($candidate && !empty($candidate['enabled'])) {
+                $tenant = $candidate;
+            }
         }
     }
 
@@ -78,19 +188,5 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
         return;
     }
 
-    $stringfields = ['wwwroot', 'dataroot', 'dbhost', 'dbname', 'dbuser', 'dbtype', 'dblibrary'];
-    foreach ($stringfields as $field) {
-        if (!empty($tenant[$field])) {
-            $cfg->{$field} = $tenant[$field];
-        }
-    }
-    if (!empty($tenant['prefix'])) {
-        $cfg->prefix = $tenant['prefix'];
-    }
-    if (array_key_exists('dbpass', $tenant)) {
-        $cfg->dbpass = (string) $tenant['dbpass'];
-    }
-    if (!empty($tenant['dboptions']) && is_array($tenant['dboptions'])) {
-        $cfg->dboptions = $tenant['dboptions'];
-    }
+    local_multitenancy_apply_tenant($cfg, $tenant, $setcookie);
 }
