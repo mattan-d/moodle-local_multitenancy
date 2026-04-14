@@ -1,11 +1,35 @@
-# Example Apache 2.4 rules when the web server rewrites tenant URLs to Moodle scripts
-# WITHOUT preserving /multitenancy/CODE in SCRIPT_NAME. In that case set MOODLE_TENANT
-# so bootstrap can still find the tenant (optional if REQUEST_URI still contains the path).
+# Why you see "Not Found" for https://dev.moodle/multitenancy/01
 #
-# Adjust paths to your Moodle document root. This is NOT applied automatically.
-
-# RewriteEngine On
-# RewriteRule ^multitenancy/([A-Za-z0-9_]+)/(.*)$ /$2 [E=MOODLE_TENANT:$1,QSA,L]
-
-# If you use an internal rewrite only (URI unchanged), you usually do NOT need MOODLE_TENANT;
-# local_multitenancy_bootstrap parses REQUEST_URI.
+# Apache looks for a real folder "multitenancy/01" under the document root.
+# That path does not exist. You must rewrite those URLs into Moodle's PHP
+# entry points and pass the tenant code to PHP.
+#
+# ---------------------------------------------------------------------------
+# Option A — .htaccess in Moodle root (recommended for local / MAMP)
+# ---------------------------------------------------------------------------
+# Copy the two RewriteRule lines from:
+#   local/multitenancy/htaccess-snippet.txt
+# into your Moodle root .htaccess inside <IfModule mod_rewrite.c>.
+# Set RewriteBase if Moodle is not at the server root.
+#
+# Bootstrap reads MOODLE_TENANT or REDIRECT_MOODLE_TENANT (Apache often
+# prefixes internal redirects with REDIRECT_).
+#
+# ---------------------------------------------------------------------------
+# Option B — httpd-vhosts.conf (snippet)
+# ---------------------------------------------------------------------------
+# <Directory "/path/to/moodle">
+#     AllowOverride All
+#     <IfModule mod_rewrite.c>
+#         RewriteEngine On
+#         RewriteRule ^multitenancy/([A-Za-z0-9_]+)/?$ index.php [E=MOODLE_TENANT:$1,QSA,L]
+#         RewriteRule ^multitenancy/([A-Za-z0-9_]+)/(.*)$ $2 [E=MOODLE_TENANT:$1,QSA,L]
+#     </IfModule>
+# </Directory>
+#
+# ---------------------------------------------------------------------------
+# Option C — no rewrite, path-only detection
+# ---------------------------------------------------------------------------
+# Only works if the server already passes REQUEST_URI that still contains
+# /multitenancy/CODE/... and SCRIPT_NAME includes that prefix (uncommon with
+# default Apache). Otherwise use Option A or B.

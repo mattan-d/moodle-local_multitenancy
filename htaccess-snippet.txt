@@ -1,0 +1,19 @@
+# ---------------------------------------------------------------------------
+# Multitenancy URL routing — paste into the Moodle ROOT .htaccess
+# (same folder as config.php and index.php), inside
+#   <IfModule mod_rewrite.c> ... </IfModule>
+# BEFORE other Moodle rules if you get conflicts (or merge carefully).
+#
+# If Moodle lives in a subdirectory, set RewriteBase to that path, e.g.
+#   RewriteBase /moodle/
+# ---------------------------------------------------------------------------
+
+RewriteRule ^multitenancy/([A-Za-z0-9_]+)/?$ index.php [E=MOODLE_TENANT:$1,QSA,L]
+RewriteRule ^multitenancy/([A-Za-z0-9_]+)/(.*)$ $2 [E=MOODLE_TENANT:$1,QSA,L]
+
+# After this:
+#   https://dev.moodle/multitenancy/01        → index.php + MOODLE_TENANT=01
+#   https://dev.moodle/multitenancy/01/my/... → my/... + MOODLE_TENANT=01
+#
+# Requires: AllowOverride FileInfo (or All) so .htaccess is read.
+# Then purge Moodle caches if needed.

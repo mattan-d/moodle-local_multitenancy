@@ -31,6 +31,26 @@
  * @param array $map Raw included data
  * @return array{path_prefix:string,by_shortcode:array,by_host:array}
  */
+/**
+ * Tenant code from Apache RewriteRule [E=MOODLE_TENANT:...] (also REDIRECT_ after internal redirect).
+ *
+ * @return string empty if unset
+ */
+function local_multitenancy_request_tenant_env(): string {
+    foreach (['MOODLE_TENANT', 'REDIRECT_MOODLE_TENANT'] as $key) {
+        if (!empty($_SERVER[$key]) && is_string($_SERVER[$key])) {
+            return (string) $_SERVER[$key];
+        }
+    }
+    foreach (['MOODLE_TENANT', 'REDIRECT_MOODLE_TENANT'] as $key) {
+        $v = getenv($key);
+        if (is_string($v) && $v !== '') {
+            return $v;
+        }
+    }
+    return '';
+}
+
 function local_multitenancy_normalise_registry(array $map): array {
     if (isset($map['by_shortcode']) && is_array($map['by_shortcode'])) {
         $pp = $map['path_prefix'] ?? '/multitenancy';
@@ -181,8 +201,8 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
             $tenant = $byshort[$code];
         }
     } else {
-        $code = getenv('MOODLE_TENANT');
-        if (is_string($code) && $code !== '' && isset($byshort[$code])) {
+        $code = local_multitenancy_request_tenant_env();
+        if ($code !== '' && isset($byshort[$code])) {
             $tenant = $byshort[$code];
         }
         if (!$tenant) {
