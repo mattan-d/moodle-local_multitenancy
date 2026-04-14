@@ -157,17 +157,22 @@ function local_multitenancy_build_public_wwwroot_from_prefix(string $pathprefix)
  */
 function local_multitenancy_request_is_parent_admin(string $requesturi): bool {
     $path = parse_url($requesturi, PHP_URL_PATH);
+    $query = parse_url($requesturi, PHP_URL_QUERY);
     if (!is_string($path) || $path === '') {
         return false;
     }
     if (preg_match('#/(?:install|upgrade)\.php$#', $path)) {
         return true;
     }
-    if (strpos($path, '/admin/') !== false || preg_match('#/admin\.php$#', $path)) {
-        return true;
-    }
     if (preg_match('#/local/multitenancy/(?:manage|edit|delete)\.php#', $path)) {
         return true;
+    }
+    // Keep plugin management/settings on parent site even when tenant cookie is set.
+    if (strpos($path, '/admin/settings.php') !== false && is_string($query)) {
+        parse_str($query, $q);
+        if (!empty($q['section']) && (string) $q['section'] === 'local_multitenancy') {
+            return true;
+        }
     }
     return false;
 }
@@ -281,7 +286,8 @@ function local_multitenancy_apply_tenant(stdClass $cfg, array $tenant, bool $set
     }
     if (!empty($tenant['shortcode']) && preg_match('/^[a-zA-Z0-9_-]+$/', (string) $tenant['shortcode'])) {
         // Keep parent and tenant sessions separate on same host.
-        $cfg->sessioncookie = 'MoodleSessionMT_' . (string) $tenant['shortcode'];
+        // Moodle prepends "MoodleSession" itself in its session manager.
+        $cfg->sessioncookie = 'MT_' . (string) $tenant['shortcode'];
     }
 
     $publicwww = null;

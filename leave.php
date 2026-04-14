@@ -39,9 +39,15 @@ if (PHP_VERSION_ID >= 70300) {
     ];
     setcookie(gateway_manager::COOKIE_NAME, '', $opts);
     setcookie(gateway_manager::WWWROOT_COOKIE_NAME, '', $opts);
+    if (!empty($CFG->sessioncookie)) {
+        setcookie('MoodleSession' . $CFG->sessioncookie, '', $opts);
+    }
 } else {
     setcookie(gateway_manager::COOKIE_NAME, '', time() - 3600, '/', '', $secure, true);
     setcookie(gateway_manager::WWWROOT_COOKIE_NAME, '', time() - 3600, '/', '', $secure, true);
+    if (!empty($CFG->sessioncookie)) {
+        setcookie('MoodleSession' . $CFG->sessioncookie, '', time() - 3600, '/', '', $secure, true);
+    }
 }
 
 redirect(new moodle_url('/'));
