@@ -58,13 +58,12 @@ class tenant_edit_form extends \moodleform {
         $mform->setType('sortorder', PARAM_INT);
         $mform->setDefault('sortorder', 0);
 
-        $seedoptions = [
-            'clean' => get_string('dbseedmode_clean', 'local_multitenancy'),
-            'copyparent' => get_string('dbseedmode_copyparent', 'local_multitenancy'),
-        ];
-        $mform->addElement('select', 'dbseedmode', get_string('dbseedmode', 'local_multitenancy'), $seedoptions);
-        $mform->addHelpButton('dbseedmode', 'dbseedmode', 'local_multitenancy');
-        $mform->setDefault('dbseedmode', 'copyparent');
+        $mform->addElement('advcheckbox', 'initdbfromparent', get_string('initdbfromparent', 'local_multitenancy'));
+        $mform->addHelpButton('initdbfromparent', 'initdbfromparent', 'local_multitenancy');
+        $mform->setDefault('initdbfromparent', 1);
+        $mform->addElement('advcheckbox', 'copycoursesdata', get_string('copycoursesdata', 'local_multitenancy'));
+        $mform->addHelpButton('copycoursesdata', 'copycoursesdata', 'local_multitenancy');
+        $mform->setDefault('copycoursesdata', 1);
 
         $this->add_action_buttons();
     }
