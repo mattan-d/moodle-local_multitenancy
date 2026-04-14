@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<XMLDB PATH="local/multitenancy/db" VERSION="20260414" COMMENT="XMLDB file for Moodle local/multitenancy"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd"
+>
+  <TABLES>
+    <TABLE NAME="local_multitenancy_tenant" COMMENT="Tenant definitions for parent (hub) Moodle">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="shortcode" TYPE="char" LENGTH="64" NOTNULL="true" SEQUENCE="false" COMMENT="Unique code for CLI/env"/>
+        <FIELD NAME="name" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="host" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="HTTP_HOST value (lowercase)"/>
+        <FIELD NAME="wwwroot" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="dataroot" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="dbhost" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="dbname" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="dbuser" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="dbpass" TYPE="text" NOTNULL="false" SEQUENCE="false"/>
+        <FIELD NAME="dbprefix" TYPE="char" LENGTH="133" NOTNULL="true" DEFAULT="mdl_" SEQUENCE="false"/>
+        <FIELD NAME="dbtype" TYPE="char" LENGTH="20" NOTNULL="true" DEFAULT="mysqli" SEQUENCE="false"/>
+        <FIELD NAME="dblibrary" TYPE="char" LENGTH="30" NOTNULL="true" DEFAULT="native" SEQUENCE="false"/>
+        <FIELD NAME="dboptions" TYPE="text" NOTNULL="false" SEQUENCE="false" COMMENT="JSON encoded dboptions"/>
+        <FIELD NAME="enabled" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="1" SEQUENCE="false"/>
+        <FIELD NAME="sortorder" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" SEQUENCE="false"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="shortcode_uix" UNIQUE="true" FIELDS="shortcode"/>
+        <INDEX NAME="host_uix" UNIQUE="true" FIELDS="host"/>
+      </INDEXES>
+    </TABLE>
+  </TABLES>
+</XMLDB>
