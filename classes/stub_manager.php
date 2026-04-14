@@ -157,12 +157,13 @@ class stub_manager {
         $content .= "\$__home = \$__scheme . '://' . \$__host . \$__base . '/';\n";
         $content .= "\$__cn = {$cookiename};\n";
         $content .= "\$__cv = rawurlencode({$codeexport});\n";
+        $content .= "\$__ss = \$__https ? 'None' : 'Lax';\n";
         $content .= "setcookie(\$__cn, \$__cv, [\n";
         $content .= "    'expires' => time() + 2592000,\n";
         $content .= "    'path' => '/',\n";
         $content .= "    'secure' => \$__https,\n";
         $content .= "    'httponly' => true,\n";
-        $content .= "    'samesite' => 'Lax',\n";
+        $content .= "    'samesite' => \$__ss,\n";
         $content .= "]);\n";
         $content .= "\$_COOKIE[\$__cn] = \$__cv;\n";
         $content .= "header('Location: ' . \$__home);\n";
