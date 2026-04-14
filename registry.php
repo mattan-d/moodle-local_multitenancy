@@ -10,7 +10,7 @@ return array (
     'wwwroot' => 'mattan',
     'dataroot' => 'mattan',
     'dbhost' => 'localhost',
-    'dbname' => 'mattan',
+    'dbname' => 'moodleca01',
     'dbuser' => 'root',
     'dbpass' => 'root',
     'prefix' => 'mdl_',
