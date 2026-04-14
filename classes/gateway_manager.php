@@ -28,8 +28,11 @@ defined('MOODLE_INTERNAL') || die();
  */
 class gateway_manager {
 
-    /** @var string */
+    /** @var string Tenant shortcode cookie. */
     public const COOKIE_NAME = 'local_mt_sc';
+
+    /** @var string Sticky public wwwroot (must match bootstrap LOCAL_MULTITENANCY_WWWROOT_COOKIE). */
+    public const WWWROOT_COOKIE_NAME = 'local_mt_wr';
 
     /**
      * Path to the users gateway root (dirroot-relative filesystem path).

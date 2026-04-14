@@ -29,15 +29,18 @@ use local_multitenancy\gateway_manager;
 $secure = is_https();
 
 if (PHP_VERSION_ID >= 70300) {
-    setcookie(gateway_manager::COOKIE_NAME, '', [
+    $opts = [
         'expires' => time() - 3600,
         'path' => '/',
         'secure' => $secure,
         'httponly' => true,
         'samesite' => 'Lax',
-    ]);
+    ];
+    setcookie(gateway_manager::COOKIE_NAME, '', $opts);
+    setcookie(gateway_manager::WWWROOT_COOKIE_NAME, '', $opts);
 } else {
     setcookie(gateway_manager::COOKIE_NAME, '', time() - 3600, '/', '', $secure, true);
+    setcookie(gateway_manager::WWWROOT_COOKIE_NAME, '', time() - 3600, '/', '', $secure, true);
 }
 
 redirect(new moodle_url('/'));
