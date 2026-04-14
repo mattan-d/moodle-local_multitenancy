@@ -52,7 +52,7 @@ function xmldb_local_multitenancy_upgrade($oldversion) {
             $dbman->add_index($table, $newindex);
         }
 
-        $field = new xmldb_field('host', XMLDB_TYPE_CHAR, '255', null, null, null, null, 'shortcode');
+        $field = new xmldb_field('host', XMLDB_TYPE_CHAR, '255', null, null, null, null, 'name');
         $dbman->change_field_notnull($table, $field);
 
         upgrade_plugin_savepoint(true, 2026041500, 'local', 'multitenancy');

@@ -36,6 +36,15 @@ if ($hassiteconfig) {
         80
     ));
 
+    $settings->add(new admin_setting_configtext(
+        'local_multitenancy/pathprefix',
+        get_string('pathprefix', 'local_multitenancy'),
+        get_string('pathprefix_desc', 'local_multitenancy'),
+        '/multitenancy',
+        PARAM_RAW_TRIMMED,
+        40
+    ));
+
     $settings->add(new admin_setting_description(
         'local_multitenancy/configsnippet',
         get_string('configsnippet_title', 'local_multitenancy'),

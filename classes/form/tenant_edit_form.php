@@ -48,12 +48,11 @@ class tenant_edit_form extends \moodleform {
 
         $mform->addElement('text', 'host', get_string('host', 'local_multitenancy'), ['size' => 60]);
         $mform->setType('host', PARAM_RAW_TRIMMED);
-        $mform->addRule('host', null, 'required', null, 'client');
         $mform->addHelpButton('host', 'host', 'local_multitenancy');
 
         $mform->addElement('text', 'wwwroot', get_string('wwwroot', 'local_multitenancy'), ['size' => 80]);
         $mform->setType('wwwroot', PARAM_RAW_TRIMMED);
-        $mform->addRule('wwwroot', null, 'required', null, 'client');
+        $mform->addHelpButton('wwwroot', 'wwwroot', 'local_multitenancy');
 
         $mform->addElement('text', 'dataroot', get_string('dataroot', 'local_multitenancy'), ['size' => 80]);
         $mform->setType('dataroot', PARAM_RAW_TRIMMED);
@@ -131,10 +130,10 @@ class tenant_edit_form extends \moodleform {
             }
         }
 
-        if (!empty($data['host'])) {
-            $host = \core_text::strtolower($data['host']);
+        if (!empty(trim($data['host'] ?? ''))) {
+            $host = \core_text::strtolower(trim($data['host']));
             $params = ['host' => $host];
-            $select = 'host = :host';
+            $select = 'host = :host AND ' . trim($DB->sql_isnotempty('local_multitenancy_tenant', 'host', true, false));
             if (!empty($data['id'])) {
                 $select .= ' AND id <> :id';
                 $params['id'] = $data['id'];
