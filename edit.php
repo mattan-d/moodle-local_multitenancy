@@ -194,9 +194,9 @@ if ($data = $form->get_data()) {
         }
     } else {
         $tenant = $DB->get_record('local_multitenancy_tenant', ['shortcode' => $row->shortcode], '*', MUST_EXIST);
-        $result = \local_multitenancy\database_provisioner::provision_if_empty($tenant);
+        $result = \local_multitenancy\database_provisioner::provision_clean_if_empty($tenant);
         if ($result['state'] === 'provisioned') {
-            \core\notification::warning(get_string('dbseedcleanfallbackcopied', 'local_multitenancy', $tenant->dbname));
+            \core\notification::success(get_string('dbseedcleanselected', 'local_multitenancy', $tenant->dbname));
         } else if ($result['state'] === 'skipped_notempty') {
             \core\notification::info(get_string('dbseedcleanselected', 'local_multitenancy', $generateddb['dbname']));
         } else if ($result['state'] === 'skipped_unsupported') {
