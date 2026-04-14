@@ -59,9 +59,15 @@ class registry_writer {
 
         $parentroot = rtrim($CFG->wwwroot, '/');
 
+        $routingmode = get_config('local_multitenancy', 'routingmode');
+        if ($routingmode === false || $routingmode === '') {
+            $routingmode = 'stub';
+        }
+
         $records = $DB->get_records('local_multitenancy_tenant', null, 'sortorder ASC, id ASC');
         $byshort = [];
         $byhost = [];
+        $stubcodes = [];
 
         foreach ($records as $r) {
             $dboptions = [];
@@ -73,7 +79,10 @@ class registry_writer {
             }
 
             $storedwww = trim((string) $r->wwwroot);
-            if ($storedwww !== '') {
+            if ($routingmode === 'stub') {
+                // Same URL space as parent: tenant via /multitenancy/CODE/ stubs + cookie (no Apache rewrite).
+                $effwww = $parentroot;
+            } else if ($storedwww !== '') {
                 $effwww = rtrim($storedwww, '/');
             } else {
                 $effwww = $parentroot . $pathprefix . '/' . $r->shortcode;
@@ -96,6 +105,9 @@ class registry_writer {
             ];
 
             $byshort[$r->shortcode] = $row;
+            if (!empty($r->enabled)) {
+                $stubcodes[] = $r->shortcode;
+            }
 
             $host = trim((string) $r->host);
             if ($host !== '') {
@@ -109,6 +121,7 @@ class registry_writer {
         }
 
         $map = [
+            'routing' => $routingmode,
             'path_prefix' => $pathprefix,
             'by_shortcode' => $byshort,
             'by_host' => $byhost,
@@ -122,6 +135,8 @@ class registry_writer {
             return false;
         }
         @chmod($target, 0660);
+
+        stub_manager::sync_all($stubcodes);
 
         return true;
     }

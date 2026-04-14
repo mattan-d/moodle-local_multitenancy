@@ -26,12 +26,6 @@
  */
 
 /**
- * Normalise registry.php payload (new format or legacy host-keyed map).
- *
- * @param array $map Raw included data
- * @return array{path_prefix:string,by_shortcode:array,by_host:array}
- */
-/**
  * Tenant code from Apache RewriteRule [E=MOODLE_TENANT:...] (also REDIRECT_ after internal redirect).
  *
  * @return string empty if unset
