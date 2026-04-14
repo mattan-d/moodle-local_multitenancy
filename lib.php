@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Capabilities.
+ * Library hooks for local_multitenancy.
  *
  * @package    local_multitenancy
  * @copyright  2026
@@ -23,14 +23,3 @@
  */
 
 defined('MOODLE_INTERNAL') || die();
-
-$capabilities = [
-    'local/multitenancy:manage' => [
-        'riskbitmask' => RISK_CONFIG | RISK_DATALOSS | RISK_XSS,
-        'captype' => 'write',
-        'contextlevel' => CONTEXT_SYSTEM,
-        'archetypes' => [
-            'manager' => CAP_ALLOW,
-        ],
-    ],
-];

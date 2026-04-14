@@ -35,6 +35,7 @@ class tenant_edit_form extends \moodleform {
 
         $mform->addElement('hidden', 'id', 0);
         $mform->setType('id', PARAM_INT);
+        $mform->setDefault('id', 0);
 
         $mform->addElement('text', 'shortcode', get_string('shortcode', 'local_multitenancy'), ['size' => 40]);
         $mform->setType('shortcode', PARAM_ALPHANUMEXT);

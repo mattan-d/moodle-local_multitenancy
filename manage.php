@@ -29,6 +29,15 @@ admin_externalpage_setup('local_multitenancy_manage');
 
 require_capability('local/multitenancy:manage', context_system::instance());
 
+if (optional_param('rebuild', 0, PARAM_INT) && confirm_sesskey()) {
+    if (\local_multitenancy\registry_writer::sync()) {
+        \core\notification::success(get_string('registryupdated', 'local_multitenancy'));
+    } else {
+        \core\notification::warning(get_string('registrynotwritten', 'local_multitenancy'));
+    }
+    redirect(new moodle_url('/local/multitenancy/manage.php'));
+}
+
 $PAGE->set_url(new moodle_url('/local/multitenancy/manage.php'));
 $PAGE->set_title(get_string('manage_tenants', 'local_multitenancy'));
 $PAGE->set_heading(get_string('manage_tenants', 'local_multitenancy'));
@@ -40,11 +49,16 @@ $registrydir = get_config('local_multitenancy', 'registrydir');
 if (empty($registrydir)) {
     echo $OUTPUT->notification(get_string('registrydirmissing', 'local_multitenancy'), 'warning');
 } else {
-    echo $OUTPUT->notification(get_string('registrydirset', 'local_multitenancy', s($registrydir)), 'info');
+    echo $OUTPUT->notification(get_string('registrydirset', 'local_multitenancy', $registrydir), 'info');
 }
 
 $addurl = new moodle_url('/local/multitenancy/edit.php');
 echo $OUTPUT->single_button($addurl, get_string('addtenant', 'local_multitenancy'), 'get');
+
+if (!empty($registrydir)) {
+    $rebuildurl = new moodle_url('/local/multitenancy/manage.php', ['rebuild' => 1]);
+    echo $OUTPUT->single_button($rebuildurl, get_string('rebuildregistry', 'local_multitenancy'), 'post');
+}
 
 $tenants = $DB->get_records('local_multitenancy_tenant', null, 'sortorder ASC, id ASC');
 

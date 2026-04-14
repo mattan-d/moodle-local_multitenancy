@@ -78,11 +78,14 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
         return;
     }
 
-    $stringfields = ['wwwroot', 'dataroot', 'dbhost', 'dbname', 'dbuser', 'dbprefix', 'dbtype', 'dblibrary'];
+    $stringfields = ['wwwroot', 'dataroot', 'dbhost', 'dbname', 'dbuser', 'dbtype', 'dblibrary'];
     foreach ($stringfields as $field) {
         if (!empty($tenant[$field])) {
             $cfg->{$field} = $tenant[$field];
         }
+    }
+    if (!empty($tenant['prefix'])) {
+        $cfg->prefix = $tenant['prefix'];
     }
     if (array_key_exists('dbpass', $tenant)) {
         $cfg->dbpass = (string) $tenant['dbpass'];

@@ -44,7 +44,7 @@ class registry_writer {
             return false;
         }
 
-        if (!make_writable_directory($dir, false) && !is_dir($dir)) {
+        if (!is_dir($dir) && !make_writable_directory($dir, false)) {
             return false;
         }
 
@@ -74,7 +74,7 @@ class registry_writer {
                 'dbname' => $r->dbname,
                 'dbuser' => $r->dbuser,
                 'dbpass' => (string) $r->dbpass,
-                'dbprefix' => $r->dbprefix,
+                'prefix' => $r->dbprefix,
                 'dbtype' => $r->dbtype,
                 'dblibrary' => $r->dblibrary,
                 'dboptions' => $dboptions,
