@@ -72,6 +72,59 @@ function local_multitenancy_abort_unknown_gateway_tenant(string $code): void {
 }
 
 /**
+ * @param string $message
+ * @return void
+ */
+function local_multitenancy_abort_bad_tenant_config(string $message): void {
+    if (!headers_sent()) {
+        http_response_code(500);
+        header('Content-Type: text/plain; charset=UTF-8');
+    }
+    echo "Multitenancy configuration error:\n\n" . $message . "\n";
+    exit(1);
+}
+
+/**
+ * @param string $path
+ * @return bool
+ */
+function local_multitenancy_is_absolute_dataroot(string $path): bool {
+    $path = trim($path);
+    if ($path === '') {
+        return false;
+    }
+    if ($path[0] === '/' || $path[0] === '\\') {
+        return true;
+    }
+    if (PHP_OS_FAMILY === 'Windows' && preg_match('/^[a-zA-Z]:[\/\\\\]/', $path)) {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * @param string $wwwroot
+ * @return bool
+ */
+function local_multitenancy_is_valid_public_wwwroot(string $wwwroot): bool {
+    return (bool) preg_match('#\Ahttps?://.#iu', $wwwroot);
+}
+
+/**
+ * @param string $pathprefix Path on server before /local/multitenancy/... (e.g. /moodle or empty).
+ * @return string|null
+ */
+function local_multitenancy_build_public_wwwroot_from_prefix(string $pathprefix): ?string {
+    $https = local_multitenancy_request_is_https();
+    $scheme = $https ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    if ($host === '') {
+        return null;
+    }
+    return rtrim($scheme . '://' . $host . $pathprefix, '/');
+}
+
+/**
  * @param string $requesturi
  * @return bool True if this request must use parent site config only.
  */
@@ -107,8 +160,7 @@ function local_multitenancy_registry_row_by_shortcode(array $map, string $shortc
 }
 
 /**
- * Build the public wwwroot from the current request when the script is a tenant gateway index.php.
- * This must match what Moodle's initialise_fullme() derives from SCRIPT_NAME.
+ * Derive public wwwroot for gateway requests (SCRIPT_NAME and/or REQUEST_URI), for initialise_fullme().
  *
  * @param string $shortcode
  * @return string|null
@@ -117,21 +169,25 @@ function local_multitenancy_gateway_derived_wwwroot(string $shortcode): ?string 
     if ($shortcode === '' || !preg_match('/^[a-zA-Z0-9_-]+$/', $shortcode)) {
         return null;
     }
-    $script = $_SERVER['SCRIPT_NAME'] ?? '';
-    $script = str_replace('\\', '/', $script);
-    $suffix = '/local/multitenancy/users/' . $shortcode . '/index.php';
-    $pos = strpos($script, $suffix);
-    if ($pos === false) {
-        return null;
+    $needle = '/local/multitenancy/users/' . $shortcode;
+    $pathprefix = null;
+
+    $script = str_replace('\\', '/', $_SERVER['SCRIPT_NAME'] ?? '');
+    $suffix = $needle . '/index.php';
+    if (($pos = strpos($script, $suffix)) !== false) {
+        $pathprefix = $pos > 0 ? substr($script, 0, $pos) : '';
     }
-    $pathprefix = $pos > 0 ? substr($script, 0, $pos) : '';
-    $https = local_multitenancy_request_is_https();
-    $scheme = $https ? 'https' : 'http';
-    $host = $_SERVER['HTTP_HOST'] ?? '';
-    if ($host === '') {
-        return null;
+    if ($pathprefix === null) {
+        $path = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
+        $path = str_replace('\\', '/', is_string($path) ? $path : '');
+        if ($path !== '' && (($pos = strpos($path, $needle)) !== false)) {
+            $pathprefix = $pos > 0 ? substr($path, 0, $pos) : '';
+        }
     }
-    return rtrim($scheme . '://' . $host . $pathprefix, '/');
+    if ($pathprefix !== null) {
+        return local_multitenancy_build_public_wwwroot_from_prefix($pathprefix);
+    }
+    return null;
 }
 
 /**
@@ -168,6 +224,10 @@ function local_multitenancy_wwwroot_cookie_is_safe(string $wwwroot): bool {
 function local_multitenancy_apply_tenant(stdClass $cfg, array $tenant, bool $setcookiefromentry): void {
     $stringfields = ['wwwroot', 'dataroot', 'dbhost', 'dbname', 'dbuser', 'dbtype', 'dblibrary'];
     foreach ($stringfields as $field) {
+        if ($setcookiefromentry && $field === 'wwwroot') {
+            // Do not apply tenant wwwroot on gateway entry — it is often mis-set; we compute public URL below.
+            continue;
+        }
         if (!empty($tenant[$field])) {
             $cfg->{$field} = $tenant[$field];
         }
@@ -192,8 +252,28 @@ function local_multitenancy_apply_tenant(stdClass $cfg, array $tenant, bool $set
             $publicwww = rtrim($decoded, '/');
         }
     }
+    if ($publicwww === null && $setcookiefromentry) {
+        $publicwww = local_multitenancy_build_public_wwwroot_from_prefix('');
+    }
+    if ($publicwww === null && !empty($tenant['wwwroot']) && local_multitenancy_is_valid_public_wwwroot((string) $tenant['wwwroot'])) {
+        $publicwww = rtrim((string) $tenant['wwwroot'], '/');
+    }
     if ($publicwww !== null) {
         $cfg->wwwroot = $publicwww;
+    }
+
+    if (!local_multitenancy_is_valid_public_wwwroot((string) $cfg->wwwroot)) {
+        local_multitenancy_abort_bad_tenant_config(
+            "Invalid \$CFG->wwwroot: \"" . $cfg->wwwroot . "\".\n" .
+            "Set the tenant wwwroot to a full URL (e.g. https://dev.moodle) in Multitenancy tenant settings."
+        );
+    }
+    if (!local_multitenancy_is_absolute_dataroot((string) $cfg->dataroot)) {
+        local_multitenancy_abort_bad_tenant_config(
+            "Invalid tenant dataroot: \"" . $cfg->dataroot . "\".\n" .
+            "It must be an absolute filesystem path (e.g. /var/moodledata/tenant1 on Unix).\n" .
+            "(עברית) נתיב moodledata חייב להיות מוחלט, לא שם קצר כמו test01."
+        );
     }
 
     if ($setcookiefromentry && !headers_sent()) {
