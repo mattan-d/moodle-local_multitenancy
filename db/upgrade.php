@@ -42,18 +42,22 @@ function xmldb_local_multitenancy_upgrade($oldversion) {
     if ($oldversion < 2026041500) {
         $table = new xmldb_table('local_multitenancy_tenant');
 
-        $oldindex = new xmldb_index('host_uix', XMLDB_INDEX_UNIQUE, ['host']);
-        if ($dbman->index_exists($table, $oldindex)) {
-            $dbman->drop_index($table, $oldindex);
+        // Any index on `host` blocks change_field_notnull — drop first, re-add after.
+        $hostuix = new xmldb_index('host_uix', XMLDB_INDEX_UNIQUE, ['host']);
+        if ($dbman->index_exists($table, $hostuix)) {
+            $dbman->drop_index($table, $hostuix);
         }
-
-        $newindex = new xmldb_index('host_ix', XMLDB_INDEX_NOTUNIQUE, ['host']);
-        if (!$dbman->index_exists($table, $newindex)) {
-            $dbman->add_index($table, $newindex);
+        $hostix = new xmldb_index('host_ix', XMLDB_INDEX_NOTUNIQUE, ['host']);
+        if ($dbman->index_exists($table, $hostix)) {
+            $dbman->drop_index($table, $hostix);
         }
 
         $field = new xmldb_field('host', XMLDB_TYPE_CHAR, '255', null, null, null, null, 'name');
         $dbman->change_field_notnull($table, $field);
+
+        if (!$dbman->index_exists($table, $hostix)) {
+            $dbman->add_index($table, $hostix);
+        }
 
         upgrade_plugin_savepoint(true, 2026041500, 'local', 'multitenancy');
     }
