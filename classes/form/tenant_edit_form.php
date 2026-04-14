@@ -154,8 +154,18 @@ class tenant_edit_form extends \moodleform {
             }
         }
 
-        if (!empty($data['wwwroot']) && !preg_match('#\Ahttps?://.#iu', trim($data['wwwroot']))) {
+        $wwwtrim = !empty($data['wwwroot']) ? trim($data['wwwroot']) : '';
+        if ($wwwtrim !== '' && !preg_match('#\Ahttps?://.#iu', $wwwtrim)) {
             $errors['wwwroot'] = get_string('errorwwwrootinvalid', 'local_multitenancy');
+        } else if ($wwwtrim !== '' && !empty($data['shortcode'])) {
+            if (preg_match('#/local/multitenancy/users/([a-zA-Z0-9_-]+)(?:/|\?|#|\z)#', $wwwtrim, $gw)) {
+                if ($gw[1] !== trim($data['shortcode'])) {
+                    $errors['wwwroot'] = get_string('errorwwwrootgatewaymismatch', 'local_multitenancy', (object) [
+                        'expected' => trim($data['shortcode']),
+                        'found' => $gw[1],
+                    ]);
+                }
+            }
         }
         if (!empty($data['dataroot'])) {
             $droot = trim($data['dataroot']);

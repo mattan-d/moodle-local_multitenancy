@@ -71,7 +71,6 @@ if ($data = $form->get_data()) {
     $row->name = trim($data->name);
     $row->host = core_text::strtolower(trim($data->host));
     $row->wwwroot = trim($data->wwwroot);
-    $row->wwwroot = rtrim($row->wwwroot, '/');
     $row->dataroot = rtrim(trim($data->dataroot), "/\\\0");
     $row->dbhost = trim($data->dbhost);
     $row->dbname = trim($data->dbname);

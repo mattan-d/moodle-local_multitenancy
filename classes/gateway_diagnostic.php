@@ -148,16 +148,6 @@ class gateway_diagnostic {
                 'key' => 'wwwrootok',
                 'detail' => $wwwroot,
             ];
-            if (rtrim($wwwrootraw, '/') !== rtrim($wwwroot, '/')) {
-                $out[] = [
-                    'level' => self::LEVEL_WARN,
-                    'key' => 'wwwrootgatewaystripped',
-                    'detail' => (object) [
-                        'from' => $wwwrootraw,
-                        'to' => $wwwroot,
-                    ],
-                ];
-            }
         }
 
         $dataroot = isset($tenant['dataroot']) ? (string) $tenant['dataroot'] : '';

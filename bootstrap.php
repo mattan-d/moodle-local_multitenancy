@@ -111,7 +111,8 @@ function local_multitenancy_is_valid_public_wwwroot(string $wwwroot): bool {
 }
 
 /**
- * Strip /local/multitenancy/users/{code} from wwwroot — that URL is only an entry point, not $CFG->wwwroot.
+ * Strip /local/multitenancy/users/{code} from a stored tenant wwwroot so $CFG->wwwroot is the real Moodle site base.
+ * Tenants may store the full gateway URL; this returns the derived public base.
  * Moodle must use the real site base (e.g. https://host or https://host/moodle).
  *
  * @param string $url
@@ -296,8 +297,8 @@ function local_multitenancy_apply_tenant(stdClass $cfg, array $tenant, bool $set
 
     if (!local_multitenancy_is_valid_public_wwwroot((string) $cfg->wwwroot)) {
         local_multitenancy_abort_bad_tenant_config(
-            "Invalid \$CFG->wwwroot: \"" . $cfg->wwwroot . "\".\n" .
-            "Set the tenant wwwroot to a full URL (e.g. https://dev.moodle) in Multitenancy tenant settings."
+            "Invalid \$CFG->wwwroot after normalisation: \"" . $cfg->wwwroot . "\".\n" .
+            "In tenant settings set a full URL (gateway URL such as https://dev.moodle/local/multitenancy/users/code/ is OK, or the site base only)."
         );
     }
     if (!local_multitenancy_is_absolute_dataroot((string) $cfg->dataroot)) {
