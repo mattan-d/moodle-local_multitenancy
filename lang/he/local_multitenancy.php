@@ -66,3 +66,35 @@ $string['tenantdeleted'] = 'הדייר נמחק.';
 $string['rebuildregistry'] = 'בנייה מחדש של קובץ registry';
 $string['configsnippet_title'] = 'קטע ל־config.php';
 $string['configsnippet_desc'] = 'הוסף ב־config.php לפני require_once(__DIR__ . \'/lib/setup.php\'). אל תשתמש ב־$CFG->dirroot בשורות האלה: מודל מגדיר אותו רק בתוך setup.php. השתמש ב־__DIR__ לנתיב ל־bootstrap. לדוגמה: if (!defined(\'MULTITENANCY_REGISTRY_DIR\')) { define(\'MULTITENANCY_REGISTRY_DIR\', $CFG->dataroot . \'/multitenancy\'); } require_once(__DIR__ . \'/local/multitenancy/bootstrap.php\'); local_multitenancy_bootstrap($CFG); ודא ש־MULTITENANCY_REGISTRY_DIR תואם להגדרת "תיקיית registry" בתוסף. ב־CLI: export MOODLE_TENANT=קוד_הדייר';
+$string['cli_diag_help'] = 'אבחון gateway לריבוי דיירים (דף לבן).
+
+שימוש: php local/multitenancy/cli/diagnose_gateway.php --shortcode=CODE
+   או: php local/multitenancy/cli/diagnose_gateway.php -s CODE
+
+בודק: MULTITENANCY_REGISTRY_DIR, registry.php, רשומת דייר, wwwroot, dataroot, קובץ gateway, חיבור DB (משפחת mysqli), כתובת צפויה בדפדפן.
+
+';
+$string['cli_diag_invalidshortcode'] = 'קוד דייר לא תקין: {$a}';
+$string['cli_diag_registrydirundefined'] = 'MULTITENANCY_REGISTRY_DIR לא מוגדר ב־config.php.';
+$string['cli_diag_registryfilenotreadable'] = 'לא ניתן לקרוא את registry: {$a}';
+$string['cli_diag_registryfileok'] = 'קובץ registry תקין: {$a}';
+$string['cli_diag_registryempty'] = 'registry.php ריק או לא מערך.';
+$string['cli_diag_tenantnotinregistry'] = 'אין דייר עם הקוד "{$a}" ב־registry — הוסף בניהול והרץ שמירה או בנייה מחדש.';
+$string['cli_diag_tenantdisabled'] = 'הדייר "{$a}" מושבת ב־registry.';
+$string['cli_diag_tenantenabled'] = 'הדייר "{$a}" מופעל.';
+$string['cli_diag_wwwrootinvalid'] = 'wwwroot ב־registry לא URL מלא (ערך: "{$a}").';
+$string['cli_diag_wwwrootok'] = 'wwwroot תקין: {$a}';
+$string['cli_diag_datarootnotabsolute'] = 'dataroot לא נתיב מוחלט (ערך: "{$a}").';
+$string['cli_diag_datarootabsolute'] = 'dataroot מוחלט: {$a}';
+$string['cli_diag_datarootmissing'] = 'תיקיית dataroot לא קיימת: {$a}';
+$string['cli_diag_datarootnotwritable'] = 'אין כתיבה ל־dataroot למשתמש זה: {$a}';
+$string['cli_diag_datarootok'] = 'dataroot קיים וניתן לכתיבה: {$a}';
+$string['cli_diag_gatewayindexmissing'] = 'חסר gateway index.php: {$a} — שמור דייר או בנה מחדש registry.';
+$string['cli_diag_gatewayindexok'] = 'gateway index.php תקין: {$a}';
+$string['cli_diag_gatewaystuboutdated'] = 'תוכן index.php שונה מה־stub של התוסף — שמור דייר או בנה מחדש registry.';
+$string['cli_diag_dbconnectok'] = 'חיבור למסד הצליח (מסד: {$a}).';
+$string['cli_diag_dbskipped'] = 'דילוג על בדיקת DB (מנהל: {$a}); הסקריפט בודק רק mysqli/mariadb/auroramysql.';
+$string['cli_diag_dbconnectfail'] = 'חיבור למסד נכשל: {$a}';
+$string['cli_diag_hintweb'] = 'כתובת gateway צפויה בדפדפן: {$a}';
+$string['cli_diag_summary_ok'] = 'כל הבדיקות הקריטיות עברו. אם עדיין דף לבן: בדוק SCRIPT_NAME, HTTPS/עוגיות, לוגי PHP/שרת, וב־Network בדפדפן.';
+$string['cli_diag_summary_fail'] = 'שורות [ERR] למעלה מסבירות את הבעיה. תקן, הרץ שוב את הסקריפט.';

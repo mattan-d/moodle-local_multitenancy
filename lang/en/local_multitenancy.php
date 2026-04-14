@@ -66,3 +66,35 @@ $string['tenantdeleted'] = 'Tenant removed.';
 $string['rebuildregistry'] = 'Rebuild registry file';
 $string['configsnippet_title'] = 'config.php snippet';
 $string['configsnippet_desc'] = 'Add the following lines in config.php before require_once(__DIR__ . \'/lib/setup.php\'). Do not use $CFG->dirroot here: Moodle only sets it inside setup.php. Use __DIR__ for the bootstrap path. Example: if (!defined(\'MULTITENANCY_REGISTRY_DIR\')) { define(\'MULTITENANCY_REGISTRY_DIR\', $CFG->dataroot . \'/multitenancy\'); } require_once(__DIR__ . \'/local/multitenancy/bootstrap.php\'); local_multitenancy_bootstrap($CFG); Match MULTITENANCY_REGISTRY_DIR with the plugin "Registry directory" setting. For CLI on a tenant, export MOODLE_TENANT=tenantcode.';
+$string['cli_diag_help'] = 'Diagnose multitenancy gateway (blank page) issues.
+
+Usage: php local/multitenancy/cli/diagnose_gateway.php --shortcode=CODE
+   or: php local/multitenancy/cli/diagnose_gateway.php -s CODE
+
+Checks: MULTITENANCY_REGISTRY_DIR, registry.php, tenant row, wwwroot URL, dataroot path, gateway index.php, DB connect (mysqli family), expected browser URL.
+
+';
+$string['cli_diag_invalidshortcode'] = 'Invalid tenant code: {$a}';
+$string['cli_diag_registrydirundefined'] = 'MULTITENANCY_REGISTRY_DIR is not defined in config.php.';
+$string['cli_diag_registryfilenotreadable'] = 'Registry file is not readable: {$a}';
+$string['cli_diag_registryfileok'] = 'Registry file OK: {$a}';
+$string['cli_diag_registryempty'] = 'registry.php returned an empty map.';
+$string['cli_diag_tenantnotinregistry'] = 'No tenant with shortcode "{$a}" in registry — add the tenant in admin and save or rebuild registry.';
+$string['cli_diag_tenantdisabled'] = 'Tenant "{$a}" is disabled in registry.';
+$string['cli_diag_tenantenabled'] = 'Tenant "{$a}" is enabled.';
+$string['cli_diag_wwwrootinvalid'] = 'wwwroot in registry is not a full URL (value: "{$a}"). Use e.g. https://yoursite.example';
+$string['cli_diag_wwwrootok'] = 'wwwroot OK: {$a}';
+$string['cli_diag_datarootnotabsolute'] = 'dataroot is not an absolute path (value: "{$a}").';
+$string['cli_diag_datarootabsolute'] = 'dataroot is absolute: {$a}';
+$string['cli_diag_datarootmissing'] = 'dataroot directory does not exist: {$a}';
+$string['cli_diag_datarootnotwritable'] = 'dataroot is not writable by this user: {$a}';
+$string['cli_diag_datarootok'] = 'dataroot exists and is writable: {$a}';
+$string['cli_diag_gatewayindexmissing'] = 'Gateway index.php missing: {$a} — save tenant or rebuild registry in admin.';
+$string['cli_diag_gatewayindexok'] = 'Gateway index.php OK: {$a}';
+$string['cli_diag_gatewaystuboutdated'] = 'Gateway index.php differs from the plugin stub — save a tenant or use Rebuild registry to refresh it.';
+$string['cli_diag_dbconnectok'] = 'Database connection OK (database: {$a}).';
+$string['cli_diag_dbskipped'] = 'Database check skipped (driver: {$a}); only mysqli/mariadb/auroramysql are tested by this script.';
+$string['cli_diag_dbconnectfail'] = 'Database connection failed: {$a}';
+$string['cli_diag_hintweb'] = 'Expected gateway URL in browser: {$a}';
+$string['cli_diag_summary_ok'] = 'All critical checks passed. If the browser still shows a blank page, check: web server SCRIPT_NAME vs REQUEST_URI, HTTPS/cookie Secure, PHP/web error logs, and the browser Network tab (empty 302/500).';
+$string['cli_diag_summary_fail'] = 'One or more [ERR] lines above explain the likely cause. Fix them, rebuild registry if needed, then run this script again.';
