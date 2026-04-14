@@ -45,6 +45,17 @@ if ($hassiteconfig) {
         40
     ));
 
+    $settings->add(new admin_setting_configselect(
+        'local_multitenancy/routingmode',
+        get_string('routingmode', 'local_multitenancy'),
+        get_string('routingmode_desc', 'local_multitenancy'),
+        'stub',
+        [
+            'stub' => get_string('routingmode_stub', 'local_multitenancy'),
+            'rewrite' => get_string('routingmode_rewrite', 'local_multitenancy'),
+        ]
+    ));
+
     $settings->add(new admin_setting_description(
         'local_multitenancy/configsnippet',
         get_string('configsnippet_title', 'local_multitenancy'),

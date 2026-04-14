@@ -45,6 +45,49 @@ function local_multitenancy_request_tenant_env(): string {
     return '';
 }
 
+/**
+ * Parent (hub) plugin admin — never switch DB; clear tenant cookie.
+ *
+ * @return bool
+ */
+function local_multitenancy_is_hub_request(): bool {
+    $uri = $_SERVER['REQUEST_URI'] ?? '';
+    $path = parse_url($uri, PHP_URL_PATH);
+    if (!is_string($path)) {
+        $path = $uri;
+    }
+    if (strpos($path, '/local/multitenancy/') === 0) {
+        return true;
+    }
+    $sn = $_SERVER['SCRIPT_NAME'] ?? '';
+    return strpos($sn, '/local/multitenancy/') !== false;
+}
+
+/**
+ * @return void
+ */
+function local_multitenancy_clear_tenant_cookie(): void {
+    $cn = 'local_multitenancy_sc';
+    if (PHP_VERSION_ID >= 70300) {
+        setcookie($cn, '', [
+            'expires' => time() - 3600,
+            'path' => '/',
+            'secure' => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' && $_SERVER['HTTPS'] !== 'OFF'),
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]);
+    } else {
+        setcookie($cn, '', time() - 3600, '/', '', false, true);
+    }
+    unset($_COOKIE[$cn]);
+}
+
+/**
+ * Normalise registry.php payload (new format or legacy host-keyed map).
+ *
+ * @param array $map Raw included data
+ * @return array
+ */
 function local_multitenancy_normalise_registry(array $map): array {
     if (isset($map['by_shortcode']) && is_array($map['by_shortcode'])) {
         $pp = $map['path_prefix'] ?? '/multitenancy';
@@ -52,7 +95,12 @@ function local_multitenancy_normalise_registry(array $map): array {
         if ($pp === '/') {
             $pp = '/multitenancy';
         }
+        $routing = $map['routing'] ?? 'stub';
+        if ($routing !== 'rewrite' && $routing !== 'stub') {
+            $routing = 'stub';
+        }
         return [
+            'routing' => $routing,
             'path_prefix' => $pp,
             'by_shortcode' => $map['by_shortcode'],
             'by_host' => is_array($map['by_host'] ?? null) ? $map['by_host'] : [],
@@ -73,6 +121,7 @@ function local_multitenancy_normalise_registry(array $map): array {
         $byshort[$row['shortcode']] = $row;
     }
     return [
+        'routing' => 'stub',
         'path_prefix' => '/multitenancy',
         'by_shortcode' => $byshort,
         'by_host' => $byhost,
@@ -182,6 +231,7 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
 
     $parentwwwroot = rtrim($cfg->wwwroot ?? '', '/');
     $registry = local_multitenancy_normalise_registry($raw);
+    $routing = $registry['routing'] ?? 'stub';
     $pathprefix = $registry['path_prefix'];
     $byshort = $registry['by_shortcode'];
     $byhost = $registry['by_host'];
@@ -195,6 +245,11 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
             $tenant = $byshort[$code];
         }
     } else {
+        if (local_multitenancy_is_hub_request()) {
+            local_multitenancy_clear_tenant_cookie();
+            return;
+        }
+
         $code = local_multitenancy_request_tenant_env();
         if ($code !== '' && isset($byshort[$code])) {
             $tenant = $byshort[$code];
@@ -203,6 +258,15 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
             $shortcode = local_multitenancy_shortcode_from_path($parentwwwroot, $pathprefix);
             if ($shortcode !== null && isset($byshort[$shortcode])) {
                 $tenant = $byshort[$shortcode];
+            }
+        }
+        if (!$tenant) {
+            $cval = $_COOKIE['local_multitenancy_sc'] ?? '';
+            if (is_string($cval) && $cval !== '') {
+                $cval = rawurldecode($cval);
+            }
+            if ($cval !== '' && preg_match('/^[A-Za-z0-9_]+$/', $cval) && isset($byshort[$cval]) && !empty($byshort[$cval]['enabled'])) {
+                $tenant = $byshort[$cval];
             }
         }
         if (!$tenant) {
@@ -239,6 +303,8 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
     }
 
     if (!defined('CLI_SCRIPT') || !CLI_SCRIPT) {
-        local_multitenancy_fix_server_paths($cfg->wwwroot);
+        if ($routing === 'rewrite') {
+            local_multitenancy_fix_server_paths($cfg->wwwroot);
+        }
     }
 }

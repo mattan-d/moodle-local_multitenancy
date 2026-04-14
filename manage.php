@@ -45,6 +45,9 @@ $PAGE->set_heading(get_string('manage_tenants', 'local_multitenancy'));
 echo $OUTPUT->header();
 echo $OUTPUT->heading(get_string('manage_tenants', 'local_multitenancy'));
 
+$leaveurl = new moodle_url('/local/multitenancy/leave.php');
+echo html_writer::tag('p', html_writer::link($leaveurl, get_string('leaveparent', 'local_multitenancy')));
+
 $pathprefix = get_config('local_multitenancy', 'pathprefix') ?: '/multitenancy';
 $pathprefix = '/' . trim((string) $pathprefix, "/\\\0");
 if ($pathprefix === '/') {

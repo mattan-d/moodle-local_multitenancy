@@ -67,5 +67,12 @@ function xmldb_local_multitenancy_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026041510, 'local', 'multitenancy');
     }
 
+    if ($oldversion < 2026041520) {
+        if (get_config('local_multitenancy', 'routingmode') === false) {
+            set_config('routingmode', 'stub', 'local_multitenancy');
+        }
+        upgrade_plugin_savepoint(true, 2026041520, 'local', 'multitenancy');
+    }
+
     return true;
 }

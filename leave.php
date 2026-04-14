@@ -15,17 +15,16 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Version details.
+ * Clear tenant selection cookie and return to site home (parent DB).
  *
  * @package    local_multitenancy
  * @copyright  2026
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-defined('MOODLE_INTERNAL') || die();
+require_once(__DIR__ . '/bootstrap.php');
+local_multitenancy_clear_tenant_cookie();
 
-$plugin->version   = 2026041520;
-$plugin->requires  = 2022112800;
-$plugin->component = 'local_multitenancy';
-$plugin->maturity  = MATURITY_ALPHA;
-$plugin->release   = '0.3.0';
+require_once(__DIR__ . '/../../config.php');
+
+redirect(new moodle_url('/'));
