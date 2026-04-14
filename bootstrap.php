@@ -279,6 +279,10 @@ function local_multitenancy_apply_tenant(stdClass $cfg, array $tenant, bool $set
     if (!empty($tenant['dboptions']) && is_array($tenant['dboptions'])) {
         $cfg->dboptions = $tenant['dboptions'];
     }
+    if (!empty($tenant['shortcode']) && preg_match('/^[a-zA-Z0-9_-]+$/', (string) $tenant['shortcode'])) {
+        // Keep parent and tenant sessions separate on same host.
+        $cfg->sessioncookie = 'MoodleSessionMT_' . (string) $tenant['shortcode'];
+    }
 
     $publicwww = null;
     if ($setcookiefromentry && !empty($tenant['shortcode'])) {

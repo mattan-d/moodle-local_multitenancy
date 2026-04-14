@@ -71,9 +71,35 @@ class database_provisioner {
         }
         $tenantconn->close();
 
-        if (!self::has_command('mysqldump') || !self::has_command('mysql')) {
-            return ['state' => 'error', 'detail' => 'mysqldump/mysql CLI tools are required on the server PATH'];
+        $clidetail = '';
+        if (self::has_command('mysqldump') && self::has_command('mysql')) {
+            $cliresult = self::clone_via_cli($tenant, $tenantdbname);
+            if ($cliresult['ok']) {
+                return self::verify_after_clone($tenant, $tenantdbname);
+            }
+            $clidetail = $cliresult['detail'];
         }
+
+        // Fallback for environments without mysql/mysqldump in PATH.
+        $phpresult = self::clone_via_php($tenant, $tenantdbname);
+        if (!$phpresult['ok']) {
+            $detail = $phpresult['detail'];
+            if ($clidetail !== '') {
+                $detail = 'CLI clone failed (' . $clidetail . '); PHP fallback failed (' . $detail . ')';
+            }
+            return ['state' => 'error', 'detail' => $detail];
+        }
+
+        return self::verify_after_clone($tenant, $tenantdbname);
+    }
+
+    /**
+     * @param \stdClass $tenant
+     * @param string $tenantdbname
+     * @return array{ok:bool, detail:string}
+     */
+    private static function clone_via_cli(\stdClass $tenant, string $tenantdbname): array {
+        global $CFG;
 
         $sourceargs = self::build_mysql_args((string) $CFG->dbhost, (string) $CFG->dbuser, (string) $CFG->dbpass, (string) $CFG->dbname);
         $targetargs = self::build_mysql_args((string) ($tenant->dbhost ?? ''), (string) ($tenant->dbuser ?? ''), (string) ($tenant->dbpass ?? ''), $tenantdbname);
@@ -85,8 +111,153 @@ class database_provisioner {
         exec($cmd . ' 2>&1', $output, $exitcode);
         if ($exitcode !== 0) {
             $detail = trim(implode("\n", array_slice($output, 0, 5)));
-            return ['state' => 'error', 'detail' => $detail !== '' ? $detail : 'mysqldump/mysql command failed'];
+            return ['ok' => false, 'detail' => ($detail !== '' ? $detail : 'mysqldump/mysql command failed')];
         }
+        return ['ok' => true, 'detail' => ''];
+    }
+
+    /**
+     * @param \stdClass $tenant
+     * @param string $tenantdbname
+     * @return array{ok:bool, detail:string}
+     */
+    private static function clone_via_php(\stdClass $tenant, string $tenantdbname): array {
+        global $CFG;
+
+        $sourceconn = @new \mysqli((string) $CFG->dbhost, (string) $CFG->dbuser, (string) $CFG->dbpass, (string) $CFG->dbname);
+        if ($sourceconn->connect_errno) {
+            return ['ok' => false, 'detail' => 'Parent DB connect failed: ' . $sourceconn->connect_error];
+        }
+
+        $targetconn = @new \mysqli(
+            (string) ($tenant->dbhost ?? ''),
+            (string) ($tenant->dbuser ?? ''),
+            (string) ($tenant->dbpass ?? ''),
+            $tenantdbname
+        );
+        if ($targetconn->connect_errno) {
+            $sourceconn->close();
+            return ['ok' => false, 'detail' => 'Tenant DB connect failed: ' . $targetconn->connect_error];
+        }
+
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(0);
+        }
+
+        $tables = [];
+        $res = $sourceconn->query('SHOW TABLES');
+        if (!$res) {
+            $sourceconn->close();
+            $targetconn->close();
+            return ['ok' => false, 'detail' => 'Failed to read table list from parent DB'];
+        }
+        while ($row = $res->fetch_row()) {
+            if (!empty($row[0])) {
+                $tables[] = (string) $row[0];
+            }
+        }
+        $res->close();
+        if (empty($tables)) {
+            $sourceconn->close();
+            $targetconn->close();
+            return ['ok' => false, 'detail' => 'Parent DB has no tables to clone'];
+        }
+
+        $targetconn->query('SET FOREIGN_KEY_CHECKS=0');
+        foreach ($tables as $table) {
+            $qtable = '`' . str_replace('`', '``', $table) . '`';
+
+            $createres = $sourceconn->query('SHOW CREATE TABLE ' . $qtable);
+            if (!$createres) {
+                $targetconn->query('SET FOREIGN_KEY_CHECKS=1');
+                $sourceconn->close();
+                $targetconn->close();
+                return ['ok' => false, 'detail' => 'SHOW CREATE TABLE failed for ' . $table];
+            }
+            $create = $createres->fetch_assoc();
+            $createres->close();
+            if (empty($create['Create Table'])) {
+                $targetconn->query('SET FOREIGN_KEY_CHECKS=1');
+                $sourceconn->close();
+                $targetconn->close();
+                return ['ok' => false, 'detail' => 'Missing CREATE TABLE SQL for ' . $table];
+            }
+
+            if (!$targetconn->query('DROP TABLE IF EXISTS ' . $qtable)) {
+                $targetconn->query('SET FOREIGN_KEY_CHECKS=1');
+                $sourceconn->close();
+                $targetconn->close();
+                return ['ok' => false, 'detail' => 'DROP TABLE failed for ' . $table . ': ' . $targetconn->error];
+            }
+            if (!$targetconn->query((string) $create['Create Table'])) {
+                $targetconn->query('SET FOREIGN_KEY_CHECKS=1');
+                $sourceconn->close();
+                $targetconn->close();
+                return ['ok' => false, 'detail' => 'CREATE TABLE failed for ' . $table . ': ' . $targetconn->error];
+            }
+
+            $datares = $sourceconn->query('SELECT * FROM ' . $qtable);
+            if (!$datares) {
+                $targetconn->query('SET FOREIGN_KEY_CHECKS=1');
+                $sourceconn->close();
+                $targetconn->close();
+                return ['ok' => false, 'detail' => 'SELECT failed for ' . $table . ': ' . $sourceconn->error];
+            }
+            $fields = $datares->fetch_fields();
+            $columns = [];
+            foreach ($fields as $field) {
+                $columns[] = '`' . str_replace('`', '``', (string) $field->name) . '`';
+            }
+            $columnlist = implode(',', $columns);
+
+            $batch = [];
+            $batchsize = 100;
+            while ($row = $datares->fetch_row()) {
+                $values = [];
+                foreach ($row as $value) {
+                    if ($value === null) {
+                        $values[] = 'NULL';
+                    } else {
+                        $values[] = "'" . $targetconn->real_escape_string((string) $value) . "'";
+                    }
+                }
+                $batch[] = '(' . implode(',', $values) . ')';
+                if (count($batch) >= $batchsize) {
+                    $sql = 'INSERT INTO ' . $qtable . ' (' . $columnlist . ') VALUES ' . implode(',', $batch);
+                    if (!$targetconn->query($sql)) {
+                        $datares->close();
+                        $targetconn->query('SET FOREIGN_KEY_CHECKS=1');
+                        $sourceconn->close();
+                        $targetconn->close();
+                        return ['ok' => false, 'detail' => 'INSERT failed for ' . $table . ': ' . $targetconn->error];
+                    }
+                    $batch = [];
+                }
+            }
+            $datares->close();
+
+            if (!empty($batch)) {
+                $sql = 'INSERT INTO ' . $qtable . ' (' . $columnlist . ') VALUES ' . implode(',', $batch);
+                if (!$targetconn->query($sql)) {
+                    $targetconn->query('SET FOREIGN_KEY_CHECKS=1');
+                    $sourceconn->close();
+                    $targetconn->close();
+                    return ['ok' => false, 'detail' => 'INSERT failed for ' . $table . ': ' . $targetconn->error];
+                }
+            }
+        }
+        $targetconn->query('SET FOREIGN_KEY_CHECKS=1');
+        $sourceconn->close();
+        $targetconn->close();
+        return ['ok' => true, 'detail' => ''];
+    }
+
+    /**
+     * @param \stdClass $tenant
+     * @param string $tenantdbname
+     * @return array{state:string, detail:string}
+     */
+    private static function verify_after_clone(\stdClass $tenant, string $tenantdbname): array {
 
         $tenantconn = @new \mysqli(
             (string) ($tenant->dbhost ?? ''),
