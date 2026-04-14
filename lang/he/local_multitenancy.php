@@ -60,4 +60,4 @@ $string['deleteconfirm'] = 'למחוק את הדייר "{$a}"? פעולה זו �
 $string['tenantdeleted'] = 'הדייר נמחק.';
 $string['rebuildregistry'] = 'בנייה מחדש של קובץ registry';
 $string['configsnippet_title'] = 'קטע ל־config.php';
-$string['configsnippet_desc'] = 'אחרי שמוגדר $CFG->dirroot (והגדרות מסד ברירת מחדל לאתר האב), הוסף לפני require_once($CFG->dirroot . \'/lib/setup.php\'): define(\'MULTITENANCY_REGISTRY_DIR\', \'/נתיב/מוחלט/זהה/לתיקיית/registry\'); require_once($CFG->dirroot . \'/local/multitenancy/bootstrap.php\'); local_multitenancy_bootstrap($CFG); ב־CLI לדייר מסוים: export MOODLE_TENANT=קוד_הדייר';
+$string['configsnippet_desc'] = 'הוסף ב־config.php לפני require_once(__DIR__ . \'/lib/setup.php\'). אל תשתמש ב־$CFG->dirroot בשורות האלה: מודל מגדיר אותו רק בתוך setup.php. השתמש ב־__DIR__ לנתיב ל־bootstrap. לדוגמה: if (!defined(\'MULTITENANCY_REGISTRY_DIR\')) { define(\'MULTITENANCY_REGISTRY_DIR\', $CFG->dataroot . \'/multitenancy\'); } require_once(__DIR__ . \'/local/multitenancy/bootstrap.php\'); local_multitenancy_bootstrap($CFG); ודא ש־MULTITENANCY_REGISTRY_DIR תואם להגדרת "תיקיית registry" בתוסף. ב־CLI: export MOODLE_TENANT=קוד_הדייר';
