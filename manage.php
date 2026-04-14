@@ -45,16 +45,6 @@ $PAGE->set_heading(get_string('manage_tenants', 'local_multitenancy'));
 echo $OUTPUT->header();
 echo $OUTPUT->heading(get_string('manage_tenants', 'local_multitenancy'));
 
-$leaveurl = new moodle_url('/local/multitenancy/leave.php');
-echo html_writer::tag('p', html_writer::link($leaveurl, get_string('leaveparent', 'local_multitenancy')));
-
-$pathprefix = get_config('local_multitenancy', 'pathprefix') ?: '/multitenancy';
-$pathprefix = '/' . trim((string) $pathprefix, "/\\\0");
-if ($pathprefix === '/') {
-    $pathprefix = '/multitenancy';
-}
-$tenanturlbase = rtrim($CFG->wwwroot, '/') . $pathprefix;
-
 $registrydir = get_config('local_multitenancy', 'registrydir');
 if (empty($registrydir)) {
     echo $OUTPUT->notification(get_string('registrydirmissing', 'local_multitenancy'), 'warning');
@@ -82,7 +72,6 @@ $table = new html_table();
 $table->head = [
     get_string('shortcode', 'local_multitenancy'),
     get_string('name'),
-    get_string('tenanturlpath', 'local_multitenancy'),
     get_string('host', 'local_multitenancy'),
     get_string('wwwroot', 'local_multitenancy'),
     get_string('dbname', 'local_multitenancy'),
@@ -97,11 +86,9 @@ foreach ($tenants as $t) {
     $delete = new moodle_url('/local/multitenancy/delete.php', ['id' => $t->id]);
     $actions = $OUTPUT->action_icon($edit, new pix_icon('t/edit', get_string('edit'))) .
         $OUTPUT->action_icon($delete, new pix_icon('t/delete', get_string('delete')));
-    $tenantlink = $tenanturlbase . '/' . rawurlencode($t->shortcode);
     $table->data[] = [
         s($t->shortcode),
         format_string($t->name),
-        html_writer::link($tenantlink, s($tenantlink), ['target' => '_blank']),
         s($t->host),
         html_writer::link($t->wwwroot, s($t->wwwroot), ['target' => '_blank']),
         s($t->dbname),

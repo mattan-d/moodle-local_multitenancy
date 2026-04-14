@@ -69,19 +69,9 @@ if ($data = $form->get_data()) {
     $row = new stdClass();
     $row->shortcode = trim($data->shortcode);
     $row->name = trim($data->name);
-    $host = trim($data->host ?? '');
-    $row->host = $host === '' ? '' : core_text::strtolower($host);
-    $row->wwwroot = trim($data->wwwroot ?? '');
-    if ($row->wwwroot === '') {
-        $pp = get_config('local_multitenancy', 'pathprefix') ?: '/multitenancy';
-        $pp = '/' . trim((string) $pp, "/\\\0");
-        if ($pp === '/') {
-            $pp = '/multitenancy';
-        }
-        $row->wwwroot = rtrim($CFG->wwwroot, '/') . $pp . '/' . $row->shortcode;
-    } else {
-        $row->wwwroot = rtrim($row->wwwroot, '/');
-    }
+    $row->host = core_text::strtolower(trim($data->host));
+    $row->wwwroot = trim($data->wwwroot);
+    $row->wwwroot = rtrim($row->wwwroot, '/');
     $row->dataroot = rtrim(trim($data->dataroot), "/\\\0");
     $row->dbhost = trim($data->dbhost);
     $row->dbname = trim($data->dbname);

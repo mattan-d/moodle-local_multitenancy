@@ -39,54 +39,5 @@ function xmldb_local_multitenancy_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026041400, 'local', 'multitenancy');
     }
 
-    if ($oldversion < 2026041500) {
-        $table = new xmldb_table('local_multitenancy_tenant');
-
-        // Any index on `host` blocks change_field_notnull — drop first, re-add after.
-        $hostuix = new xmldb_index('host_uix', XMLDB_INDEX_UNIQUE, ['host']);
-        if ($dbman->index_exists($table, $hostuix)) {
-            $dbman->drop_index($table, $hostuix);
-        }
-        $hostix = new xmldb_index('host_ix', XMLDB_INDEX_NOTUNIQUE, ['host']);
-        if ($dbman->index_exists($table, $hostix)) {
-            $dbman->drop_index($table, $hostix);
-        }
-
-        $field = new xmldb_field('host', XMLDB_TYPE_CHAR, '255', null, null, null, null, 'name');
-        $dbman->change_field_notnull($table, $field);
-
-        if (!$dbman->index_exists($table, $hostix)) {
-            $dbman->add_index($table, $hostix);
-        }
-
-        upgrade_plugin_savepoint(true, 2026041500, 'local', 'multitenancy');
-    }
-
-    // Align code version with DB (avoids "cannot downgrade" after a brief 2026041510 bump).
-    if ($oldversion < 2026041510) {
-        upgrade_plugin_savepoint(true, 2026041510, 'local', 'multitenancy');
-    }
-
-    if ($oldversion < 2026041520) {
-        if (get_config('local_multitenancy', 'routingmode') === false) {
-            set_config('routingmode', 'stub', 'local_multitenancy');
-        }
-        upgrade_plugin_savepoint(true, 2026041520, 'local', 'multitenancy');
-    }
-
-    if ($oldversion < 2026041530) {
-        global $CFG;
-        require_once($CFG->dirroot . '/local/multitenancy/classes/registry_writer.php');
-        \local_multitenancy\registry_writer::sync();
-        upgrade_plugin_savepoint(true, 2026041530, 'local', 'multitenancy');
-    }
-
-    if ($oldversion < 2026041540) {
-        global $CFG;
-        require_once($CFG->dirroot . '/local/multitenancy/classes/registry_writer.php');
-        \local_multitenancy\registry_writer::sync();
-        upgrade_plugin_savepoint(true, 2026041540, 'local', 'multitenancy');
-    }
-
     return true;
 }
