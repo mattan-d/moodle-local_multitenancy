@@ -23,3 +23,49 @@
  */
 
 defined('MOODLE_INTERNAL') || die();
+
+/**
+ * Add current tenant indicator and leave link to footer.
+ *
+ * @return string
+ */
+function local_multitenancy_standard_footer_html(): string {
+    if (empty($_COOKIE['local_mt_sc'])) {
+        return '';
+    }
+    $code = (string) $_COOKIE['local_mt_sc'];
+    if (!preg_match('/^[a-zA-Z0-9_-]+$/', $code)) {
+        return '';
+    }
+
+    $tenantname = $code;
+    if (defined('MULTITENANCY_REGISTRY_DIR') && MULTITENANCY_REGISTRY_DIR) {
+        $registryfile = rtrim((string) MULTITENANCY_REGISTRY_DIR, '/\\') . '/registry.php';
+        if (is_readable($registryfile)) {
+            $map = include $registryfile;
+            if (is_array($map)) {
+                foreach ($map as $row) {
+                    if (is_array($row) && !empty($row['shortcode']) && (string) $row['shortcode'] === $code) {
+                        if (!empty($row['name'])) {
+                            $tenantname = (string) $row['name'];
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    $context = get_string('footertenantcontext', 'local_multitenancy', (object) [
+        'name' => $tenantname,
+        'code' => $code,
+    ]);
+    $leaveurl = new moodle_url('/local/multitenancy/leave.php');
+    $leavelink = html_writer::link($leaveurl, get_string('footerleavetenant', 'local_multitenancy'));
+
+    return html_writer::div(
+        html_writer::tag('span', s($context)) . ' ' . $leavelink,
+        'local-multitenancy-footer-context',
+        ['style' => 'margin-top:8px;font-size:.9rem;']
+    );
+}
