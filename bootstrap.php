@@ -28,8 +28,11 @@
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-/** Cookie name for sticky tenant when using path gateways (must match gateway_manager). */
+/** Cookie: tenant shortcode (must match gateway_manager::COOKIE_NAME). */
 define('LOCAL_MULTITENANCY_COOKIE', 'local_mt_sc');
+
+/** Cookie: public wwwroot derived from the gateway request (scheme + host + Moodle path prefix). */
+define('LOCAL_MULTITENANCY_WWWROOT_COOKIE', 'local_mt_wr');
 
 /**
  * @param string $requesturi
@@ -67,6 +70,59 @@ function local_multitenancy_registry_row_by_shortcode(array $map, string $shortc
 }
 
 /**
+ * Build the public wwwroot from the current request when the script is a tenant gateway index.php.
+ * This must match what Moodle's initialise_fullme() derives from SCRIPT_NAME.
+ *
+ * @param string $shortcode
+ * @return string|null
+ */
+function local_multitenancy_gateway_derived_wwwroot(string $shortcode): ?string {
+    if ($shortcode === '' || !preg_match('/^[a-zA-Z0-9_-]+$/', $shortcode)) {
+        return null;
+    }
+    $script = $_SERVER['SCRIPT_NAME'] ?? '';
+    $script = str_replace('\\', '/', $script);
+    $suffix = '/local/multitenancy/users/' . $shortcode . '/index.php';
+    $pos = strpos($script, $suffix);
+    if ($pos === false) {
+        return null;
+    }
+    $pathprefix = $pos > 0 ? substr($script, 0, $pos) : '';
+    $https = !empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off';
+    $scheme = $https ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    if ($host === '') {
+        return null;
+    }
+    return rtrim($scheme . '://' . $host . $pathprefix, '/');
+}
+
+/**
+ * @param string $wwwroot
+ * @return bool
+ */
+function local_multitenancy_wwwroot_cookie_is_safe(string $wwwroot): bool {
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    if ($host === '') {
+        return false;
+    }
+    $expectedhost = preg_replace('/:\d+$/', '', explode(':', $host, 2)[0]);
+    $parsed = parse_url($wwwroot);
+    if (empty($parsed['host'])) {
+        return false;
+    }
+    $wh = preg_replace('/:\d+$/', '', $parsed['host']);
+    if (function_exists('mb_strtolower')) {
+        $wh = mb_strtolower($wh, 'UTF-8');
+        $expectedhost = mb_strtolower($expectedhost, 'UTF-8');
+    } else {
+        $wh = strtolower($wh);
+        $expectedhost = strtolower($expectedhost);
+    }
+    return $wh === $expectedhost;
+}
+
+/**
  * @param stdClass $cfg
  * @param array $tenant
  * @param bool $setcookiefromentry
@@ -89,18 +145,39 @@ function local_multitenancy_apply_tenant(stdClass $cfg, array $tenant, bool $set
         $cfg->dboptions = $tenant['dboptions'];
     }
 
+    $publicwww = null;
+    if ($setcookiefromentry && !empty($tenant['shortcode'])) {
+        $publicwww = local_multitenancy_gateway_derived_wwwroot((string) $tenant['shortcode']);
+    }
+    if ($publicwww === null && !empty($_COOKIE[LOCAL_MULTITENANCY_WWWROOT_COOKIE])) {
+        $decoded = rawurldecode((string) $_COOKIE[LOCAL_MULTITENANCY_WWWROOT_COOKIE]);
+        if ($decoded !== '' && local_multitenancy_wwwroot_cookie_is_safe($decoded)) {
+            $publicwww = rtrim($decoded, '/');
+        }
+    }
+    if ($publicwww !== null) {
+        $cfg->wwwroot = $publicwww;
+    }
+
     if ($setcookiefromentry && !headers_sent()) {
         $secure = !empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off';
+        $opts = [
+            'expires' => 0,
+            'path' => '/',
+            'secure' => $secure,
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ];
         if (PHP_VERSION_ID >= 70300) {
-            setcookie(LOCAL_MULTITENANCY_COOKIE, (string) $tenant['shortcode'], [
-                'expires' => 0,
-                'path' => '/',
-                'secure' => $secure,
-                'httponly' => true,
-                'samesite' => 'Lax',
-            ]);
+            setcookie(LOCAL_MULTITENANCY_COOKIE, (string) $tenant['shortcode'], $opts);
+            if ($publicwww !== null) {
+                setcookie(LOCAL_MULTITENANCY_WWWROOT_COOKIE, rawurlencode($publicwww), $opts);
+            }
         } else {
             setcookie(LOCAL_MULTITENANCY_COOKIE, (string) $tenant['shortcode'], 0, '/', '', $secure, true);
+            if ($publicwww !== null) {
+                setcookie(LOCAL_MULTITENANCY_WWWROOT_COOKIE, rawurlencode($publicwww), 0, '/', '', $secure, true);
+            }
         }
     }
 }
