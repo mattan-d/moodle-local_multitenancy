@@ -197,18 +197,29 @@ function local_multitenancy_gateway_derived_wwwroot(string $shortcode): ?string 
         return null;
     }
     $needle = '/local/multitenancy/users/' . $shortcode;
+    $suffix = $needle . '/index.php';
     $pathprefix = null;
 
-    $script = str_replace('\\', '/', $_SERVER['SCRIPT_NAME'] ?? '');
-    $suffix = $needle . '/index.php';
-    if (($pos = strpos($script, $suffix)) !== false) {
-        $pathprefix = $pos > 0 ? substr($script, 0, $pos) : '';
+    $candidates = [];
+    foreach (['SCRIPT_NAME', 'PHP_SELF'] as $key) {
+        if (!empty($_SERVER[$key])) {
+            $candidates[] = str_replace('\\', '/', (string) $_SERVER[$key]);
+        }
+    }
+    foreach ($candidates as $script) {
+        if (($pos = strpos($script, $suffix)) !== false) {
+            $pathprefix = $pos > 0 ? substr($script, 0, $pos) : '';
+            break;
+        }
     }
     if ($pathprefix === null) {
-        $path = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
-        $path = str_replace('\\', '/', is_string($path) ? $path : '');
-        if ($path !== '' && (($pos = strpos($path, $needle)) !== false)) {
-            $pathprefix = $pos > 0 ? substr($path, 0, $pos) : '';
+        foreach (['REQUEST_URI', 'REDIRECT_URL'] as $key) {
+            $path = parse_url($_SERVER[$key] ?? '', PHP_URL_PATH);
+            $path = str_replace('\\', '/', is_string($path) ? $path : '');
+            if ($path !== '' && (($pos = strpos($path, $needle)) !== false)) {
+                $pathprefix = $pos > 0 ? substr($path, 0, $pos) : '';
+                break;
+            }
         }
     }
     if ($pathprefix !== null) {
@@ -278,6 +289,14 @@ function local_multitenancy_apply_tenant(stdClass $cfg, array $tenant, bool $set
         $decoded = local_multitenancy_normalize_public_wwwroot($decoded);
         if ($decoded !== '' && local_multitenancy_wwwroot_cookie_is_safe($decoded)) {
             $publicwww = rtrim($decoded, '/');
+        }
+    }
+    // Prefer $CFG->wwwroot from config.php (correct for subdirectory installs); avoid host-only
+    // guess that drops /moodle and breaks initialise_fullme() ($SCRIPT becomes null → blank page).
+    if ($publicwww === null && $setcookiefromentry) {
+        $fromcfg = local_multitenancy_normalize_public_wwwroot((string) $cfg->wwwroot);
+        if (local_multitenancy_is_valid_public_wwwroot($fromcfg)) {
+            $publicwww = rtrim($fromcfg, '/');
         }
     }
     if ($publicwww === null && $setcookiefromentry) {
