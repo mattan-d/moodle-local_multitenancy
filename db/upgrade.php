@@ -62,5 +62,10 @@ function xmldb_local_multitenancy_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026041500, 'local', 'multitenancy');
     }
 
+    // Align code version with DB (avoids "cannot downgrade" after a brief 2026041510 bump).
+    if ($oldversion < 2026041510) {
+        upgrade_plugin_savepoint(true, 2026041510, 'local', 'multitenancy');
+    }
+
     return true;
 }
