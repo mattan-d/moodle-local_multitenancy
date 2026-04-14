@@ -26,7 +26,7 @@ require_once(__DIR__ . '/../../config.php');
 
 use local_multitenancy\gateway_manager;
 
-$secure = !empty($CFG->cookiesecure);
+$secure = is_https();
 
 if (PHP_VERSION_ID >= 70300) {
     setcookie(gateway_manager::COOKIE_NAME, '', [

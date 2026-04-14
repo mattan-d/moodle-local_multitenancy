@@ -36,6 +36,7 @@ $returnurl = new moodle_url('/local/multitenancy/manage.php');
 
 if (optional_param('confirm', 0, PARAM_INT) && confirm_sesskey()) {
     $DB->delete_records('local_multitenancy_tenant', ['id' => $id]);
+    \local_multitenancy\gateway_manager::sync();
     if (\local_multitenancy\registry_writer::sync()) {
         \core\notification::success(get_string('tenantdeleted', 'local_multitenancy'));
     } else {

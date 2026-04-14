@@ -54,6 +54,7 @@ class tenant_edit_form extends \moodleform {
         $mform->addElement('text', 'wwwroot', get_string('wwwroot', 'local_multitenancy'), ['size' => 80]);
         $mform->setType('wwwroot', PARAM_RAW_TRIMMED);
         $mform->addRule('wwwroot', null, 'required', null, 'client');
+        $mform->addHelpButton('wwwroot', 'wwwroot', 'local_multitenancy');
 
         $mform->addElement('text', 'dataroot', get_string('dataroot', 'local_multitenancy'), ['size' => 80]);
         $mform->setType('dataroot', PARAM_RAW_TRIMMED);

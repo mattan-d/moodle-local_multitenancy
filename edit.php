@@ -104,6 +104,7 @@ if ($data = $form->get_data()) {
         $DB->insert_record('local_multitenancy_tenant', $row);
     }
 
+    \local_multitenancy\gateway_manager::sync();
     if (\local_multitenancy\registry_writer::sync()) {
         \core\notification::success(get_string('registryupdated', 'local_multitenancy'));
     } else {

@@ -20,9 +20,8 @@
  * Define MULTITENANCY_REGISTRY_DIR in config.php to the directory that holds
  * registry.php (written by the plugin from the parent site).
  *
- * Tenant resolution order (web): HTTP_HOST map, then gateway entry constant,
- * then cookie (same host, path-style URLs under /local/multitenancy/users/{code}/).
- * Parent (hub) admin URLs skip tenant overrides.
+ * Tenant resolution order (web): gateway entry constant (/local/multitenancy/users/{code}/),
+ * then sticky cookie, then HTTP_HOST map. Parent admin and plugin management URLs skip overrides.
  *
  * @package    local_multitenancy
  * @copyright  2026
@@ -153,17 +152,9 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
     $tenant = null;
     $setcookie = false;
 
-    $host = $_SERVER['HTTP_HOST'] ?? '';
-    if (function_exists('mb_strtolower')) {
-        $host = mb_strtolower($host, 'UTF-8');
-    } else {
-        $host = strtolower($host);
-    }
-    if ($host !== '' && isset($map[$host])) {
-        $tenant = $map[$host];
-    }
-
-    if (!$tenant && defined('LOCAL_MULTITENANCY_ENTRY_SHORTCODE')) {
+    // Path gateways (/local/multitenancy/users/{shortcode}/) and cookie — before HTTP_HOST so many
+    // tenants can share the same public host as the parent.
+    if (defined('LOCAL_MULTITENANCY_ENTRY_SHORTCODE')) {
         $code = (string) LOCAL_MULTITENANCY_ENTRY_SHORTCODE;
         if ($code !== '' && preg_match('/^[a-zA-Z0-9_-]+$/', $code)) {
             $candidate = local_multitenancy_registry_row_by_shortcode($map, $code);
@@ -182,6 +173,16 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
                 $tenant = $candidate;
             }
         }
+    }
+
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    if (function_exists('mb_strtolower')) {
+        $host = mb_strtolower($host, 'UTF-8');
+    } else {
+        $host = strtolower($host);
+    }
+    if (!$tenant && $host !== '' && isset($map[$host])) {
+        $tenant = $map[$host];
     }
 
     if (!$tenant || empty($tenant['enabled'])) {

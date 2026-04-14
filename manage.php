@@ -30,6 +30,7 @@ admin_externalpage_setup('local_multitenancy_manage');
 require_capability('local/multitenancy:manage', context_system::instance());
 
 if (optional_param('rebuild', 0, PARAM_INT) && confirm_sesskey()) {
+    \local_multitenancy\gateway_manager::sync();
     if (\local_multitenancy\registry_writer::sync()) {
         \core\notification::success(get_string('registryupdated', 'local_multitenancy'));
     } else {
@@ -60,6 +61,8 @@ if (!empty($registrydir)) {
     echo $OUTPUT->single_button($rebuildurl, get_string('rebuildregistry', 'local_multitenancy'), 'post');
 }
 
+echo html_writer::tag('p', get_string('gatewayexplain', 'local_multitenancy'), ['class' => 'form-description']);
+
 $tenants = $DB->get_records('local_multitenancy_tenant', null, 'sortorder ASC, id ASC');
 
 if (!$tenants) {
@@ -72,6 +75,7 @@ $table = new html_table();
 $table->head = [
     get_string('shortcode', 'local_multitenancy'),
     get_string('name'),
+    get_string('gatewayurl', 'local_multitenancy'),
     get_string('host', 'local_multitenancy'),
     get_string('wwwroot', 'local_multitenancy'),
     get_string('dbname', 'local_multitenancy'),
@@ -86,9 +90,11 @@ foreach ($tenants as $t) {
     $delete = new moodle_url('/local/multitenancy/delete.php', ['id' => $t->id]);
     $actions = $OUTPUT->action_icon($edit, new pix_icon('t/edit', get_string('edit'))) .
         $OUTPUT->action_icon($delete, new pix_icon('t/delete', get_string('delete')));
+    $gateway = new moodle_url('/local/multitenancy/users/' . rawurlencode($t->shortcode) . '/');
     $table->data[] = [
         s($t->shortcode),
         format_string($t->name),
+        html_writer::link($gateway, s($gateway->out(false)), ['target' => '_blank']),
         s($t->host),
         html_writer::link($t->wwwroot, s($t->wwwroot), ['target' => '_blank']),
         s($t->dbname),
