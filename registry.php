@@ -24,6 +24,24 @@ return array (
       array (
       ),
     ),
+    'mattan' => 
+    array (
+      'shortcode' => 'mattan',
+      'name' => 'mattan',
+      'enabled' => 1,
+      'wwwroot' => 'https://dev.moodle',
+      'dataroot' => 'mattan',
+      'dbhost' => 'localhost',
+      'dbname' => 'moodlemattan',
+      'dbuser' => 'root',
+      'dbpass' => 'root',
+      'prefix' => 'mdl_',
+      'dbtype' => 'mysqli',
+      'dblibrary' => 'native',
+      'dboptions' => 
+      array (
+      ),
+    ),
   ),
   'by_host' => 
   array (
