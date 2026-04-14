@@ -254,19 +254,23 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
         if ($code !== '' && isset($byshort[$code])) {
             $tenant = $byshort[$code];
         }
-        if (!$tenant) {
-            $shortcode = local_multitenancy_shortcode_from_path($parentwwwroot, $pathprefix);
-            if ($shortcode !== null && isset($byshort[$shortcode])) {
-                $tenant = $byshort[$shortcode];
-            }
-        }
+        // Cookie before path so / and /index.php pick tenant after stub redirect.
         if (!$tenant) {
             $cval = $_COOKIE['local_multitenancy_sc'] ?? '';
             if (is_string($cval) && $cval !== '') {
                 $cval = rawurldecode($cval);
             }
-            if ($cval !== '' && preg_match('/^[A-Za-z0-9_]+$/', $cval) && isset($byshort[$cval]) && !empty($byshort[$cval]['enabled'])) {
-                $tenant = $byshort[$cval];
+            if ($cval !== '' && preg_match('/^[A-Za-z0-9_]+$/', $cval) && isset($byshort[$cval])) {
+                $ten = $byshort[$cval];
+                if (!array_key_exists('enabled', $ten) || (int) $ten['enabled'] === 1) {
+                    $tenant = $ten;
+                }
+            }
+        }
+        if (!$tenant) {
+            $shortcode = local_multitenancy_shortcode_from_path($parentwwwroot, $pathprefix);
+            if ($shortcode !== null && isset($byshort[$shortcode])) {
+                $tenant = $byshort[$shortcode];
             }
         }
         if (!$tenant) {
@@ -282,7 +286,10 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
         }
     }
 
-    if (!$tenant || empty($tenant['enabled'])) {
+    if (!$tenant) {
+        return;
+    }
+    if (array_key_exists('enabled', $tenant) && (int) $tenant['enabled'] !== 1) {
         return;
     }
 

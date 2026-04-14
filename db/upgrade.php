@@ -81,5 +81,12 @@ function xmldb_local_multitenancy_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026041530, 'local', 'multitenancy');
     }
 
+    if ($oldversion < 2026041540) {
+        global $CFG;
+        require_once($CFG->dirroot . '/local/multitenancy/classes/registry_writer.php');
+        \local_multitenancy\registry_writer::sync();
+        upgrade_plugin_savepoint(true, 2026041540, 'local', 'multitenancy');
+    }
+
     return true;
 }
