@@ -25,11 +25,15 @@
 defined('MOODLE_INTERNAL') || die();
 
 /**
- * Add current tenant indicator and leave link to footer.
+ * Build current tenant indicator and leave link HTML.
  *
  * @return string
  */
-function local_multitenancy_standard_footer_html(): string {
+function local_multitenancy_footer_context_html_once(): string {
+    static $alreadyrendered = false;
+    if ($alreadyrendered) {
+     //   return '';
+    }
     if (empty($_COOKIE['local_mt_sc'])) {
         return '';
     }
@@ -63,9 +67,28 @@ function local_multitenancy_standard_footer_html(): string {
     $leaveurl = new moodle_url('/local/multitenancy/leave.php');
     $leavelink = html_writer::link($leaveurl, get_string('footerleavetenant', 'local_multitenancy'));
 
+    $alreadyrendered = true;
     return html_writer::div(
         html_writer::tag('span', s($context)) . ' ' . $leavelink,
         'local-multitenancy-footer-context',
         ['style' => 'margin-top:8px;font-size:.9rem;']
     );
+}
+
+/**
+ * Add current tenant indicator and leave link to standard footer HTML.
+ *
+ * @return string
+ */
+function local_multitenancy_standard_footer_html(): string {
+    return local_multitenancy_footer_context_html_once();
+}
+
+/**
+ * Legacy fallback for themes/flows that skip standard_footer_html hook.
+ *
+ * @return void
+ */
+function local_multitenancy_before_footer(): void {
+    echo local_multitenancy_footer_context_html_once();
 }
