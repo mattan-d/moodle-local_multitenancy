@@ -27,23 +27,5 @@ return array (
   ),
   'by_host' => 
   array (
-    'dev.ca01' => 
-    array (
-      'shortcode' => '01',
-      'name' => 'ca01',
-      'enabled' => 1,
-      'wwwroot' => 'https://dev.moodle',
-      'dataroot' => 'ca01',
-      'dbhost' => 'localhost',
-      'dbname' => 'moodleca01',
-      'dbuser' => 'root',
-      'dbpass' => 'root',
-      'prefix' => 'mdl_',
-      'dbtype' => 'mysqli',
-      'dblibrary' => 'native',
-      'dboptions' => 
-      array (
-      ),
-    ),
   ),
 );
