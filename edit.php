@@ -103,6 +103,20 @@ if ($data = $form->get_data()) {
         $DB->insert_record('local_multitenancy_tenant', $row);
     }
 
+    if (!empty($data->initdbfromparent)) {
+        $tenant = $DB->get_record('local_multitenancy_tenant', ['shortcode' => $row->shortcode], '*', MUST_EXIST);
+        $result = \local_multitenancy\database_provisioner::provision_if_empty($tenant);
+        if ($result['state'] === 'provisioned') {
+            \core\notification::success(get_string('dbprovisioned', 'local_multitenancy', $tenant->dbname));
+        } else if ($result['state'] === 'skipped_notempty') {
+            \core\notification::info(get_string('dbprovisionskippednotempty', 'local_multitenancy', $tenant->dbname));
+        } else if ($result['state'] === 'skipped_unsupported') {
+            \core\notification::warning(get_string('dbprovisionskippedunsupported', 'local_multitenancy', $tenant->dbtype));
+        } else {
+            \core\notification::error(get_string('dbprovisionfailed', 'local_multitenancy', $result['detail']));
+        }
+    }
+
     \local_multitenancy\gateway_manager::sync();
     if (\local_multitenancy\registry_writer::sync()) {
         \core\notification::success(get_string('registryupdated', 'local_multitenancy'));

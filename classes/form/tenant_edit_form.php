@@ -113,6 +113,10 @@ class tenant_edit_form extends \moodleform {
         $mform->setType('sortorder', PARAM_INT);
         $mform->setDefault('sortorder', 0);
 
+        $mform->addElement('advcheckbox', 'initdbfromparent', get_string('initdbfromparent', 'local_multitenancy'));
+        $mform->addHelpButton('initdbfromparent', 'initdbfromparent', 'local_multitenancy');
+        $mform->setDefault('initdbfromparent', 1);
+
         $this->add_action_buttons();
     }
 
