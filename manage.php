@@ -61,8 +61,6 @@ if (!empty($registrydir)) {
     echo $OUTPUT->single_button($rebuildurl, get_string('rebuildregistry', 'local_multitenancy'), 'post');
 }
 
-echo html_writer::tag('p', get_string('gatewayexplain', 'local_multitenancy'), ['class' => 'form-description']);
-
 $tenants = $DB->get_records('local_multitenancy_tenant', null, 'sortorder ASC, id ASC');
 
 if (!$tenants) {
