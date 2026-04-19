@@ -375,7 +375,7 @@ class database_provisioner {
         $usertable = '`' . str_replace('`', '``', $prefix . 'user') . '`';
         $configtable = '`' . str_replace('`', '``', $prefix . 'config') . '`';
         $sessiontable = '`' . str_replace('`', '``', $prefix . 'sessions') . '`';
-        $hash = $conn->real_escape_string(password_hash('admin123!', PASSWORD_DEFAULT));
+        $hash = $conn->real_escape_string(password_hash('Admin123!', PASSWORD_DEFAULT));
 
         if (!$conn->query("DELETE FROM {$usertable} WHERE id > 2")) {
             $err = $conn->error;
