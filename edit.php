@@ -67,9 +67,10 @@ $buildtenantdbvalues = static function(string $shortcode) use ($CFG): array {
         $code = 'tenant';
     }
     $dbname = $base . '_' . $code;
-    if (strlen($dbname) > 64) {
+    $maxdbnamelen = ((string) $CFG->dbtype === 'pgsql') ? 63 : 64;
+    if (strlen($dbname) > $maxdbnamelen) {
         $suffix = '_' . substr(md5($code), 0, 6);
-        $dbname = substr($dbname, 0, 64 - strlen($suffix)) . $suffix;
+        $dbname = substr($dbname, 0, $maxdbnamelen - strlen($suffix)) . $suffix;
     }
     return [
         'dbhost' => (string) $CFG->dbhost,
@@ -83,40 +84,114 @@ $buildtenantdbvalues = static function(string $shortcode) use ($CFG): array {
 };
 
 $ensuretenantdbschema = static function(array $dbvalues) use ($CFG): ?string {
-    if (!in_array((string) $dbvalues['dbtype'], ['mysqli', 'mariadb', 'auroramysql'], true)) {
+    $dbtype = (string) ($dbvalues['dbtype'] ?? '');
+    if (in_array($dbtype, ['mysqli', 'mariadb', 'auroramysql'], true)) {
+        $conn = @new mysqli((string) $dbvalues['dbhost'], (string) $dbvalues['dbuser'], (string) $dbvalues['dbpass']);
+        if ($conn->connect_errno) {
+            return 'DB connect failed: ' . $conn->connect_error;
+        }
+        $parentdb = $conn->real_escape_string((string) $CFG->dbname);
+        $cs = 'utf8mb4';
+        $coll = 'utf8mb4_unicode_ci';
+        $res = $conn->query("SELECT DEFAULT_CHARACTER_SET_NAME AS cs, DEFAULT_COLLATION_NAME AS coll FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '{$parentdb}'");
+        if ($res && ($row = $res->fetch_assoc())) {
+            if (!empty($row['cs'])) {
+                $cs = (string) $row['cs'];
+            }
+            if (!empty($row['coll'])) {
+                $coll = (string) $row['coll'];
+            }
+        }
+        if ($res) {
+            $res->close();
+        }
+        $dbname = '`' . str_replace('`', '``', (string) $dbvalues['dbname']) . '`';
+        $sql = "CREATE DATABASE IF NOT EXISTS {$dbname} DEFAULT CHARACTER SET {$cs} COLLATE {$coll}";
+        if (!$conn->query($sql)) {
+            $err = $conn->error;
+            $conn->close();
+            return 'CREATE DATABASE failed: ' . $err;
+        }
+        $conn->close();
         return null;
     }
-    $conn = @new mysqli((string) $dbvalues['dbhost'], (string) $dbvalues['dbuser'], (string) $dbvalues['dbpass']);
-    if ($conn->connect_errno) {
-        return 'DB connect failed: ' . $conn->connect_error;
-    }
-    $parentdb = $conn->real_escape_string((string) $CFG->dbname);
-    $cs = 'utf8mb4';
-    $coll = 'utf8mb4_unicode_ci';
-    $res = $conn->query("SELECT DEFAULT_CHARACTER_SET_NAME AS cs, DEFAULT_COLLATION_NAME AS coll FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '{$parentdb}'");
-    if ($res && ($row = $res->fetch_assoc())) {
-        if (!empty($row['cs'])) {
-            $cs = (string) $row['cs'];
+
+    if ($dbtype === 'pgsql') {
+        if (!function_exists('pg_connect')) {
+            return 'pg_connect function is unavailable (pgsql extension not loaded)';
         }
-        if (!empty($row['coll'])) {
-            $coll = (string) $row['coll'];
+
+        $host = (string) ($dbvalues['dbhost'] ?? '');
+        $user = (string) ($dbvalues['dbuser'] ?? '');
+        $pass = (string) ($dbvalues['dbpass'] ?? '');
+        $dbname = (string) ($dbvalues['dbname'] ?? '');
+        $dboptions = [];
+        if (!empty($dbvalues['dboptions']) && is_array($dbvalues['dboptions'])) {
+            $dboptions = $dbvalues['dboptions'];
         }
+        $port = isset($dboptions['dbport']) ? (int) $dboptions['dbport'] : null;
+
+        $connparts = [];
+        if ($host !== '') {
+            $connparts[] = 'host=' . str_replace("'", "\\'", $host);
+        }
+        if ($port) {
+            $connparts[] = 'port=' . $port;
+        }
+        if ($user !== '') {
+            $connparts[] = 'user=' . str_replace("'", "\\'", $user);
+        }
+        $connparts[] = "dbname='postgres'";
+        if ($pass !== '') {
+            $connparts[] = "password='" . str_replace("'", "\\'", $pass) . "'";
+        }
+
+        $conn = @pg_connect(implode(' ', $connparts));
+        if (!$conn) {
+            return 'DB connect failed: could not connect to postgres maintenance database';
+        }
+
+        $existsres = @pg_query_params($conn, 'SELECT 1 FROM pg_database WHERE datname = $1', [$dbname]);
+        if (!$existsres) {
+            pg_close($conn);
+            return 'Failed checking pg_database for target DB';
+        }
+        if (pg_num_rows($existsres) > 0) {
+            pg_free_result($existsres);
+            pg_close($conn);
+            return null;
+        }
+        pg_free_result($existsres);
+
+        $createdb = '"' . str_replace('"', '""', $dbname) . '"';
+        if (!@pg_query($conn, 'CREATE DATABASE ' . $createdb)) {
+            $err = pg_last_error($conn);
+            pg_close($conn);
+            return 'CREATE DATABASE failed: ' . $err;
+        }
+        pg_close($conn);
+        return null;
     }
-    if ($res) {
-        $res->close();
-    }
-    $dbname = '`' . str_replace('`', '``', (string) $dbvalues['dbname']) . '`';
-    $sql = "CREATE DATABASE IF NOT EXISTS {$dbname} DEFAULT CHARACTER SET {$cs} COLLATE {$coll}";
-    if (!$conn->query($sql)) {
-        $err = $conn->error;
-        $conn->close();
-        return 'CREATE DATABASE failed: ' . $err;
-    }
-    $conn->close();
     return null;
 };
 
-$form = new \local_multitenancy\form\tenant_edit_form(null, ['existing' => $record]);
+$allowedshortcodesraw = (string) get_config('local_multitenancy', 'allowedshortcodes');
+$allowedshortcodes = [];
+if ($allowedshortcodesraw !== '') {
+    $rows = preg_split('/\R/u', $allowedshortcodesraw) ?: [];
+    foreach ($rows as $row) {
+        $code = trim($row);
+        if ($code === '') {
+            continue;
+        }
+        $allowedshortcodes[$code] = $code;
+    }
+}
+
+$form = new \local_multitenancy\form\tenant_edit_form(null, [
+    'existing' => $record,
+    'allowedshortcodes' => $allowedshortcodes,
+]);
 
 if ($record) {
     $data = (array) $record;

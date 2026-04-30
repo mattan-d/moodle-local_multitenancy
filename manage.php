@@ -55,6 +55,8 @@ if (empty($registrydir)) {
 
 $addurl = new moodle_url('/local/multitenancy/edit.php');
 echo $OUTPUT->single_button($addurl, get_string('addtenant', 'local_multitenancy'), 'get');
+$allowedlisturl = new moodle_url('/local/multitenancy/allowed_shortcodes.php');
+echo $OUTPUT->single_button($allowedlisturl, get_string('manageallowedshortcodes', 'local_multitenancy'), 'get');
 
 if (!empty($registrydir)) {
     $rebuildurl = new moodle_url('/local/multitenancy/manage.php', ['rebuild' => 1]);

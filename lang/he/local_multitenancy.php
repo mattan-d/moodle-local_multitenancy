@@ -31,6 +31,13 @@ $string['edittenant'] = 'עריכת דייר';
 $string['deletetenant'] = 'מחיקת דייר';
 $string['shortcode'] = 'קוד דייר';
 $string['shortcode_help'] = 'מזהה קצר וייחודי לשימוש ב־CLI (משתנה סביבה MOODLE_TENANT). מומלץ אותיות, מספרים וקו תחתון בלבד.';
+$string['errorshortcodenotallowed'] = 'קוד הדייר חייב להיבחר מתוך רשימת קודי הדיירים המותרים.';
+$string['manageallowedshortcodes'] = 'ניהול קודי דיירים מותרים';
+$string['allowedshortcodes'] = 'קודי דיירים מותרים';
+$string['allowedshortcodes_help'] = 'הזן קוד דייר אחד בכל שורה. קודים אלו יוצגו כ־dropdown במסך הוספת דייר.';
+$string['allowedshortcodesdesc'] = 'הגדר כאן את רשימת קודי הדייר האפשריים. במסך "הוספת דייר", שדה קוד הדייר יוצג כרשימה נפתחת לפי רשימה זו.';
+$string['allowedshortcodessaved'] = 'רשימת קודי הדיירים המותרים נשמרה.';
+$string['errorallowedshortcodesinvalid'] = 'קוד דייר לא תקין "{$a}". מותר להשתמש רק באותיות, מספרים וקו תחתון.';
 $string['host'] = 'מארח HTTP (Host)';
 $string['host_help'] = 'לדייר לפי תת־דומיין: ערך Host מדויק (למשל school1.example.com). לדיירים לפי נתיב על אותו דומיין כמו האב, השתמש במארח־מקום ייחודי לכל דייר (למשל mattan.path.local) שלא מגיע בקשות אמיתיות — הזיהוי הוא דרך /local/multitenancy/users/{קוד}/ ועוגייה.';
 $string['wwwroot'] = 'כתובת wwwroot של הדייר';
@@ -46,6 +53,7 @@ $string['dbpass'] = 'סיסמת מסד';
 $string['dbprefix'] = 'קידומת טבלאות';
 $string['dbtype'] = 'סוג מסד';
 $string['dblibrary'] = 'ספריית מסד';
+$string['enabled'] = 'מופעל';
 $string['dboptions'] = 'dboptions (JSON)';
 $string['dboptions_help'] = 'אובייקט JSON אופציונלי שמוזג ל־$CFG->dboptions עבור הדייר. השאר ריק לשימוש בברירות מחדל מ־config.php.';
 $string['sortorder'] = 'סדר מיון';
@@ -58,7 +66,7 @@ $string['copycoursesdata_help'] = 'מסומן: העתקה מלאה כולל כל
 $string['dbprovisioned'] = 'DB הדייר "{$a}" אותחל מתוך DB האתר הראשי.';
 $string['dbprovisionednocourses'] = 'DB הדייר "{$a}" אותחל מתוך DB האתר הראשי ללא העתקת נתוני קורסים (מלבד קורס חזית).';
 $string['dbprovisionskippednotempty'] = 'DB הדייר "{$a}" כבר מכיל טבלאות, לכן האתחול דולג.';
-$string['dbprovisionskippedunsupported'] = 'אתחול DB אוטומטי נתמך כרגע רק לדרייברים ממשפחת mysql (dbtype של הדייר: "{$a}").';
+$string['dbprovisionskippedunsupported'] = 'אתחול DB אוטומטי נתמך כרגע רק לדרייברים ממשפחת mysql ול־pgsql (dbtype של הדייר: "{$a}").';
 $string['dbprovisionfailed'] = 'אתחול DB אוטומטי לדייר נכשל: {$a}';
 $string['datarootautocreatefailed'] = 'לא ניתן ליצור אוטומטית את dataroot של הדייר: {$a}. צור ידנית וודא הרשאות כתיבה לשרת.';
 $string['dbschemaautocreated'] = 'סכימת מסד הנתונים של הדייר קיימת ומוכנה: {$a}.';
@@ -90,7 +98,7 @@ $string['cli_diag_help'] = 'אבחון gateway לריבוי דיירים (דף �
   php local/multitenancy/cli/diagnose_gateway.php --shortcode=CODE
   php local/multitenancy/cli/diagnose_gateway.php -s CODE
 
-בודק: MULTITENANCY_REGISTRY_DIR, registry.php, רשומת דייר, wwwroot, dataroot, קובץ gateway, חיבור DB, כתובת בדפדפן.
+בודק: MULTITENANCY_REGISTRY_DIR, registry.php, רשומת דייר, wwwroot, dataroot, קובץ gateway, חיבור DB (mysql-family + pgsql), כתובת בדפדפן.
 
 ';
 $string['cli_diag_invalidshortcode'] = 'קוד דייר לא תקין: {$a}';
@@ -114,7 +122,7 @@ $string['cli_diag_gatewayindexmissing'] = 'חסר gateway index.php: {$a} — ש
 $string['cli_diag_gatewayindexok'] = 'gateway index.php תקין: {$a}';
 $string['cli_diag_gatewaystuboutdated'] = 'תוכן index.php שונה מה־stub של התוסף — שמור דייר או בנה מחדש registry.';
 $string['cli_diag_dbconnectok'] = 'חיבור למסד הצליח (מסד: {$a}).';
-$string['cli_diag_dbskipped'] = 'דילוג על בדיקת DB (מנהל: {$a}); הסקריפט בודק רק mysqli/mariadb/auroramysql.';
+$string['cli_diag_dbskipped'] = 'דילוג על בדיקת DB (מנהל: {$a}); הסקריפט בודק רק mysqli/mariadb/auroramysql/pgsql.';
 $string['cli_diag_dbconnectfail'] = 'חיבור למסד נכשל: {$a}';
 $string['cli_diag_hintweb'] = 'כתובת gateway צפויה בדפדפן: {$a}';
 $string['cli_diag_summary_ok'] = 'כל הבדיקות הקריטיות עברו. אם עדיין דף לבן: בדוק SCRIPT_NAME, HTTPS/עוגיות, לוגי PHP/שרת, וב־Network בדפדפן.';

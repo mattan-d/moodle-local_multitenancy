@@ -31,14 +31,25 @@ class tenant_edit_form extends \moodleform {
 
     public function definition() {
         $mform = $this->_form;
+        $editing = !empty($this->_customdata['existing']);
+        $allowed = [];
+        if (!empty($this->_customdata['allowedshortcodes']) && is_array($this->_customdata['allowedshortcodes'])) {
+            $allowed = $this->_customdata['allowedshortcodes'];
+        }
         $mform->addElement('hidden', 'id', 0);
         $mform->setType('id', PARAM_INT);
         $mform->setDefault('id', 0);
 
-        $mform->addElement('text', 'shortcode', get_string('shortcode', 'local_multitenancy'), ['size' => 40]);
-        $mform->setType('shortcode', PARAM_ALPHANUMEXT);
-        $mform->addRule('shortcode', null, 'required', null, 'client');
-        $mform->addHelpButton('shortcode', 'shortcode', 'local_multitenancy');
+        if (!$editing && !empty($allowed)) {
+            $mform->addElement('select', 'shortcode', get_string('shortcode', 'local_multitenancy'), $allowed);
+            $mform->addRule('shortcode', null, 'required', null, 'client');
+            $mform->addHelpButton('shortcode', 'shortcode', 'local_multitenancy');
+        } else {
+            $mform->addElement('text', 'shortcode', get_string('shortcode', 'local_multitenancy'), ['size' => 40]);
+            $mform->setType('shortcode', PARAM_ALPHANUMEXT);
+            $mform->addRule('shortcode', null, 'required', null, 'client');
+            $mform->addHelpButton('shortcode', 'shortcode', 'local_multitenancy');
+        }
 
         $mform->addElement('text', 'name', get_string('name'), ['size' => 60]);
         $mform->setType('name', PARAM_TEXT);
@@ -73,6 +84,11 @@ class tenant_edit_form extends \moodleform {
         $errors = parent::validation($data, $files);
 
         if (!empty($data['shortcode'])) {
+            if (empty($data['id']) && !empty($this->_customdata['allowedshortcodes']) && is_array($this->_customdata['allowedshortcodes'])) {
+                if (!array_key_exists($data['shortcode'], $this->_customdata['allowedshortcodes'])) {
+                    $errors['shortcode'] = get_string('errorshortcodenotallowed', 'local_multitenancy');
+                }
+            }
             $params = ['shortcode' => $data['shortcode']];
             $select = 'shortcode = :shortcode';
             if (!empty($data['id'])) {

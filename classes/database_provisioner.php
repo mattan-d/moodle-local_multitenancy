@@ -29,6 +29,8 @@ class database_provisioner {
 
     /** @var string[] DB types that can be cloned via mysql/mysqldump. */
     private const MYSQL_FAMILY = ['mysqli', 'mariadb', 'auroramysql'];
+    /** @var string[] DB types that can be cloned via pg_dump/psql. */
+    private const POSTGRES_FAMILY = ['pgsql'];
 
     /**
      * @param \stdClass $tenant Tenant row from local_multitenancy_tenant.
@@ -38,7 +40,7 @@ class database_provisioner {
         global $CFG;
 
         $dbtype = (string) ($tenant->dbtype ?? '');
-        if (!in_array($dbtype, self::MYSQL_FAMILY, true)) {
+        if (!self::is_supported_dbtype($dbtype)) {
             return ['state' => 'skipped_unsupported', 'detail' => $dbtype];
         }
 
@@ -50,29 +52,16 @@ class database_provisioner {
             return ['state' => 'error', 'detail' => 'Tenant DB equals parent DB'];
         }
 
-        $tenantconn = @new \mysqli(
-            (string) ($tenant->dbhost ?? ''),
-            (string) ($tenant->dbuser ?? ''),
-            (string) ($tenant->dbpass ?? ''),
-            $tenantdbname
-        );
-        if ($tenantconn->connect_errno) {
-            return ['state' => 'error', 'detail' => 'Tenant DB connect failed: ' . $tenantconn->connect_error];
-        }
-
-        $tablecount = self::count_tables($tenantconn, $tenantdbname);
+        $tablecount = self::count_tables_for_tenant($tenant, $tenantdbname);
         if ($tablecount === null) {
-            $tenantconn->close();
             return ['state' => 'error', 'detail' => 'Could not inspect tenant DB tables'];
         }
         if ($tablecount > 0) {
-            $tenantconn->close();
             return ['state' => 'skipped_notempty', 'detail' => (string) $tablecount];
         }
-        $tenantconn->close();
 
         $clidetail = '';
-        if ($copycourses && self::has_command('mysqldump') && self::has_command('mysql')) {
+        if ($copycourses && self::can_clone_via_cli($dbtype)) {
             $cliresult = self::clone_via_cli($tenant, $tenantdbname);
             if ($cliresult['ok']) {
                 $adminreset = self::reset_to_initial_admin($tenant, $tenantdbname);
@@ -84,7 +73,7 @@ class database_provisioner {
             $clidetail = $cliresult['detail'];
         }
 
-        // Fallback for environments without mysql/mysqldump in PATH.
+        // Fallback for environments without DB dump tools in PATH.
         $phpresult = self::clone_via_php($tenant, $tenantdbname, $copycourses);
         if (!$phpresult['ok']) {
             $detail = $phpresult['detail'];
@@ -110,6 +99,26 @@ class database_provisioner {
     private static function clone_via_cli(\stdClass $tenant, string $tenantdbname): array {
         global $CFG;
 
+        $dbtype = (string) ($tenant->dbtype ?? '');
+        if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
+            $sourceargs = self::build_pg_args((string) $CFG->dbhost, (string) $CFG->dbuser, (string) $CFG->dbname);
+            $targetargs = self::build_pg_args((string) ($tenant->dbhost ?? ''), (string) ($tenant->dbuser ?? ''), $tenantdbname);
+            $sourceenv = self::build_pg_password_env((string) $CFG->dbpass);
+            $targetenv = self::build_pg_password_env((string) ($tenant->dbpass ?? ''));
+            $cmd = trim($sourceenv . ' pg_dump --clean --if-exists --no-owner --no-privileges ' .
+                implode(' ', $sourceargs)) .
+                ' | ' .
+                trim($targetenv . ' psql ' . implode(' ', $targetargs));
+            $output = [];
+            $exitcode = 0;
+            exec($cmd . ' 2>&1', $output, $exitcode);
+            if ($exitcode !== 0) {
+                $detail = trim(implode("\n", array_slice($output, 0, 5)));
+                return ['ok' => false, 'detail' => ($detail !== '' ? $detail : 'pg_dump/psql command failed')];
+            }
+            return ['ok' => true, 'detail' => ''];
+        }
+
         $sourceargs = self::build_mysql_args((string) $CFG->dbhost, (string) $CFG->dbuser, (string) $CFG->dbpass, (string) $CFG->dbname);
         $targetargs = self::build_mysql_args((string) ($tenant->dbhost ?? ''), (string) ($tenant->dbuser ?? ''), (string) ($tenant->dbpass ?? ''), $tenantdbname);
         $cmd = 'mysqldump --single-transaction --quick --skip-lock-tables ' .
@@ -133,6 +142,9 @@ class database_provisioner {
      */
     private static function clone_via_php(\stdClass $tenant, string $tenantdbname, bool $copycourses): array {
         global $CFG;
+        if (!in_array((string) ($tenant->dbtype ?? ''), self::MYSQL_FAMILY, true)) {
+            return ['ok' => false, 'detail' => 'PHP fallback clone currently supports mysql-family only'];
+        }
 
         $sourceconn = @new \mysqli((string) $CFG->dbhost, (string) $CFG->dbuser, (string) $CFG->dbpass, (string) $CFG->dbname);
         if ($sourceconn->connect_errno) {
@@ -334,18 +346,7 @@ class database_provisioner {
      * @return array{state:string, detail:string}
      */
     private static function verify_after_clone(\stdClass $tenant, string $tenantdbname): array {
-
-        $tenantconn = @new \mysqli(
-            (string) ($tenant->dbhost ?? ''),
-            (string) ($tenant->dbuser ?? ''),
-            (string) ($tenant->dbpass ?? ''),
-            $tenantdbname
-        );
-        if ($tenantconn->connect_errno) {
-            return ['state' => 'error', 'detail' => 'Tenant DB reconnect failed after provision'];
-        }
-        $newcount = self::count_tables($tenantconn, $tenantdbname);
-        $tenantconn->close();
+        $newcount = self::count_tables_for_tenant($tenant, $tenantdbname);
         if ($newcount === null || $newcount === 0) {
             return ['state' => 'error', 'detail' => 'Provision finished but tenant DB is still empty'];
         }
@@ -361,7 +362,11 @@ class database_provisioner {
      * @return array{state:string, detail:string}
      */
     private static function reset_to_initial_admin(\stdClass $tenant, string $tenantdbname): array {
-        $prefix = (string) ($tenant->prefix ?? 'mdl_');
+        if (in_array((string) ($tenant->dbtype ?? ''), self::POSTGRES_FAMILY, true)) {
+            return self::reset_to_initial_admin_pg($tenant, $tenantdbname);
+        }
+
+        $prefix = (string) ($tenant->dbprefix ?? 'mdl_');
         $conn = @new \mysqli(
             (string) ($tenant->dbhost ?? ''),
             (string) ($tenant->dbuser ?? ''),
@@ -400,6 +405,53 @@ class database_provisioner {
     }
 
     /**
+     * Keep only guest + one initial admin user in tenant DB (PostgreSQL).
+     *
+     * @param \stdClass $tenant
+     * @param string $tenantdbname
+     * @return array{state:string, detail:string}
+     */
+    private static function reset_to_initial_admin_pg(\stdClass $tenant, string $tenantdbname): array {
+        if (!function_exists('pg_connect')) {
+            return ['state' => 'error', 'detail' => 'pg_connect function is unavailable (pgsql extension not loaded)'];
+        }
+        $prefix = (string) ($tenant->dbprefix ?? 'mdl_');
+        $conn = @pg_connect(self::build_pg_conninfo(
+            (string) ($tenant->dbhost ?? ''),
+            (string) ($tenant->dbuser ?? ''),
+            (string) ($tenant->dbpass ?? ''),
+            $tenantdbname
+        ));
+        if (!$conn) {
+            return ['state' => 'error', 'detail' => 'Tenant DB reconnect failed for admin reset'];
+        }
+
+        $usertable = '"' . str_replace('"', '""', $prefix . 'user') . '"';
+        $configtable = '"' . str_replace('"', '""', $prefix . 'config') . '"';
+        $sessiontable = '"' . str_replace('"', '""', $prefix . 'sessions') . '"';
+        $hash = password_hash('Admin123!', PASSWORD_DEFAULT);
+
+        if (!@pg_query($conn, "DELETE FROM {$usertable} WHERE id > 2")) {
+            $err = pg_last_error($conn);
+            pg_close($conn);
+            return ['state' => 'error', 'detail' => 'Failed to clean copied users: ' . $err];
+        }
+        if (!@pg_query_params($conn, "UPDATE {$usertable} SET auth='manual', username='admin', password=$1, deleted=0, suspended=0, confirmed=1 WHERE id=2", [$hash])) {
+            $err = pg_last_error($conn);
+            pg_close($conn);
+            return ['state' => 'error', 'detail' => 'Failed to reset admin user: ' . $err];
+        }
+        if (!@pg_query($conn, "UPDATE {$configtable} SET value='2' WHERE name='siteadmins'")) {
+            $err = pg_last_error($conn);
+            pg_close($conn);
+            return ['state' => 'error', 'detail' => 'Failed to set siteadmins: ' . $err];
+        }
+        @pg_query($conn, "TRUNCATE TABLE {$sessiontable}");
+        pg_close($conn);
+        return ['state' => 'ok', 'detail' => ''];
+    }
+
+    /**
      * @param \mysqli $conn
      * @param string $dbname
      * @return int|null
@@ -416,12 +468,84 @@ class database_provisioner {
     }
 
     /**
+     * @param \stdClass $tenant
+     * @param string $dbname
+     * @return int|null
+     */
+    private static function count_tables_for_tenant(\stdClass $tenant, string $dbname): ?int {
+        $dbtype = (string) ($tenant->dbtype ?? '');
+        if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
+            return self::count_tables_pg($tenant, $dbname);
+        }
+        $conn = @new \mysqli(
+            (string) ($tenant->dbhost ?? ''),
+            (string) ($tenant->dbuser ?? ''),
+            (string) ($tenant->dbpass ?? ''),
+            $dbname
+        );
+        if ($conn->connect_errno) {
+            return null;
+        }
+        $count = self::count_tables($conn, $dbname);
+        $conn->close();
+        return $count;
+    }
+
+    /**
+     * @param \stdClass $tenant
+     * @param string $dbname
+     * @return int|null
+     */
+    private static function count_tables_pg(\stdClass $tenant, string $dbname): ?int {
+        if (!function_exists('pg_connect')) {
+            return null;
+        }
+        $conn = @pg_connect(self::build_pg_conninfo(
+            (string) ($tenant->dbhost ?? ''),
+            (string) ($tenant->dbuser ?? ''),
+            (string) ($tenant->dbpass ?? ''),
+            $dbname
+        ));
+        if (!$conn) {
+            return null;
+        }
+        $res = @pg_query($conn, "SELECT COUNT(*) AS c FROM information_schema.tables WHERE table_schema = 'public'");
+        if (!$res) {
+            pg_close($conn);
+            return null;
+        }
+        $row = pg_fetch_assoc($res);
+        pg_free_result($res);
+        pg_close($conn);
+        return isset($row['c']) ? (int) $row['c'] : null;
+    }
+
+    /**
      * @param string $cmd
      * @return bool
      */
     private static function has_command(string $cmd): bool {
         $result = trim((string) shell_exec('command -v ' . escapeshellarg($cmd) . ' 2>/dev/null'));
         return $result !== '';
+    }
+
+    /**
+     * @param string $dbtype
+     * @return bool
+     */
+    private static function is_supported_dbtype(string $dbtype): bool {
+        return in_array($dbtype, self::MYSQL_FAMILY, true) || in_array($dbtype, self::POSTGRES_FAMILY, true);
+    }
+
+    /**
+     * @param string $dbtype
+     * @return bool
+     */
+    private static function can_clone_via_cli(string $dbtype): bool {
+        if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
+            return self::has_command('pg_dump') && self::has_command('psql');
+        }
+        return self::has_command('mysqldump') && self::has_command('mysql');
     }
 
     /**
@@ -442,6 +566,58 @@ class database_provisioner {
         $args[] = escapeshellarg('--password=' . $pass);
         $args[] = escapeshellarg($dbname);
         return $args;
+    }
+
+    /**
+     * @param string $host
+     * @param string $user
+     * @param string $dbname
+     * @return string[]
+     */
+    private static function build_pg_args(string $host, string $user, string $dbname): array {
+        $args = [];
+        if ($host !== '') {
+            $args[] = escapeshellarg('--host=' . $host);
+        }
+        if ($user !== '') {
+            $args[] = escapeshellarg('--username=' . $user);
+        }
+        $args[] = escapeshellarg('--dbname=' . $dbname);
+        $args[] = escapeshellarg('--no-password');
+        return $args;
+    }
+
+    /**
+     * @param string $password
+     * @return string
+     */
+    private static function build_pg_password_env(string $password): string {
+        if ($password === '') {
+            return '';
+        }
+        return 'PGPASSWORD=' . escapeshellarg($password);
+    }
+
+    /**
+     * @param string $host
+     * @param string $user
+     * @param string $pass
+     * @param string $dbname
+     * @return string
+     */
+    private static function build_pg_conninfo(string $host, string $user, string $pass, string $dbname): string {
+        $parts = [];
+        if ($host !== '') {
+            $parts[] = "host='" . str_replace("'", "\\'", $host) . "'";
+        }
+        if ($user !== '') {
+            $parts[] = "user='" . str_replace("'", "\\'", $user) . "'";
+        }
+        if ($pass !== '') {
+            $parts[] = "password='" . str_replace("'", "\\'", $pass) . "'";
+        }
+        $parts[] = "dbname='" . str_replace("'", "\\'", $dbname) . "'";
+        return implode(' ', $parts);
     }
 }
 

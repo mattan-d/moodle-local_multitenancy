@@ -263,6 +263,42 @@ class gateway_diagnostic {
      */
     protected static function test_database(array $tenant): ?string {
         $dbtype = $tenant['dbtype'] ?? 'mysqli';
+        if (in_array($dbtype, ['pgsql'], true)) {
+            if (!function_exists('pg_connect')) {
+                return 'pgsql extension not loaded';
+            }
+            $host = $tenant['dbhost'] ?? 'localhost';
+            $user = $tenant['dbuser'] ?? '';
+            $pass = $tenant['dbpass'] ?? '';
+            $name = $tenant['dbname'] ?? '';
+            $port = null;
+            if (!empty($tenant['dboptions']) && is_array($tenant['dboptions']) && !empty($tenant['dboptions']['dbport'])) {
+                $port = (int) $tenant['dboptions']['dbport'];
+            }
+            $parts = [];
+            if ($host !== '') {
+                $parts[] = "host='" . str_replace("'", "\\'", (string) $host) . "'";
+            }
+            if (!empty($port)) {
+                $parts[] = 'port=' . $port;
+            }
+            if ($user !== '') {
+                $parts[] = "user='" . str_replace("'", "\\'", (string) $user) . "'";
+            }
+            if ($pass !== '') {
+                $parts[] = "password='" . str_replace("'", "\\'", (string) $pass) . "'";
+            }
+            if ($name !== '') {
+                $parts[] = "dbname='" . str_replace("'", "\\'", (string) $name) . "'";
+            }
+            $conn = @pg_connect(implode(' ', $parts));
+            if (!$conn) {
+                return 'could not connect using provided pgsql credentials';
+            }
+            pg_close($conn);
+            return null;
+        }
+
         if (!in_array($dbtype, ['mysqli', 'mariadb', 'auroramysql'], true)) {
             return 'skip:' . $dbtype;
         }

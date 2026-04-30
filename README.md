@@ -9,7 +9,7 @@
 ## דרישות
 
 - **Moodle:** לפחות גרסת ליבה התואמת ל־`$plugin->requires` ב־`version.php` (נכון לכתיבה זו: Moodle 4.1 ומעלה).
-- **מסד נתונים:** יצירת סכימה אוטומטית והעתקת DB מהאב נתמכים כיום למשפחת **MySQL/MariaDB** (`mysqli`, `mariadb`, `auroramysql`).
+- **מסד נתונים:** יצירת סכימה אוטומטית והעתקת DB מהאב נתמכים כיום למשפחת **MySQL/MariaDB** (`mysqli`, `mariadb`, `auroramysql`) וגם ל־**PostgreSQL** (`pgsql`).
 - **Hooks:** התוסף משתמש ב־hook של ליבת Moodle להצגת הקשר דייר בפוטר (`before_standard_footer_html_generation`).
 
 ---
@@ -57,6 +57,9 @@ local_multitenancy_bootstrap($CFG);
 2. **ניהול האתר → תוספים מקומיים → ניהול דיירים** (או מהעמוד של התוסף)
    - הוסף דייר, ערוך או מחק.
    - אם שינית הגדרות — לחץ **בנייה מחדש של קובץ registry** (או שמור דייר מחדש) כדי לעדכן את `registry.php` ואת קבצי ה־gateway.
+3. **ניהול האתר → תוספים מקומיים → ניהול קודי דיירים מותרים**
+   - הזן רשימת קודים אפשריים (קוד אחד בכל שורה).
+   - במסך **הוספת דייר**, שדה **קוד דייר** יוצג כרשימה נפתחת מתוך רשימה זו.
 
 ---
 
@@ -65,6 +68,7 @@ local_multitenancy_bootstrap($CFG);
 בטופס "הוספת דייר" ממלאים בעיקר:
 
 - **קוד דייר (`shortcode`):** מזהה קצר, ייחודי, לשימוש ב־URL וב־CLI (`MOODLE_TENANT`). מומלץ אותיות באנגלית, מספרים וקו תחתון.
+- אם הוגדרה רשימת "קודי דיירים מותרים" — שדה קוד הדייר נבחר מתוך dropdown (במקום הקלדה חופשית במסך הוספה).
 - **שם לתצוגה**, **מופעל**, **סדר מיון**.
 - **`dboptions` (JSON)** — אופציונלי; מוזג ל־`$CFG->dboptions` של הדייר.
 
@@ -136,7 +140,7 @@ php admin/cli/cron.php
 php local/multitenancy/cli/diagnose_gateway.php --shortcode=CODE
 ```
 
-או `-s CODE`. הסקריפט בודק registry, רשומת דייר, נתיבים, קובץ gateway, חיבור DB (במשפחת mysqli) וכתובת צפויה בדפדפן.
+או `-s CODE`. הסקריפט בודק registry, רשומת דייר, נתיבים, קובץ gateway, חיבור DB (mysql-family + pgsql) וכתובת צפויה בדפדפן.
 
 ---
 
@@ -160,7 +164,7 @@ php local/multitenancy/cli/diagnose_gateway.php --shortcode=CODE
 | אין `registry.php` / שגיאות כתיבה | נתיב `MULTITENANCY_REGISTRY_DIR`, הרשאות כתיבה, שמירת דייר או "בנייה מחדש של registry". |
 | 404 בכניסה ל־gateway | קוד דייר לא קיים, דייר מושבת, או registry לא עודכן. |
 | דף לבן | הרץ `diagnose_gateway.php`, בדוק לוגי PHP/שרת, HTTPS ועוגיות `Secure`. |
-| אתחול DB נכשל | ודא דרייבר MySQL; בדוק הרשאות משתמש DB ליצירת סכימה. |
+| אתחול DB נכשל | ודא דרייבר נתמך (MySQL-family/pgsql); בדוק הרשאות משתמש DB ליצירת סכימה והעתקה. |
 
 ---
 

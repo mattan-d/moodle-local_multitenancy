@@ -31,6 +31,13 @@ $string['edittenant'] = 'Edit tenant';
 $string['deletetenant'] = 'Delete tenant';
 $string['shortcode'] = 'Tenant code';
 $string['shortcode_help'] = 'Short unique identifier used for CLI (environment variable MOODLE_TENANT). Use letters, numbers and underscores only.';
+$string['errorshortcodenotallowed'] = 'Tenant code must be selected from the allowed tenant list.';
+$string['manageallowedshortcodes'] = 'Manage allowed tenant codes';
+$string['allowedshortcodes'] = 'Allowed tenant codes';
+$string['allowedshortcodes_help'] = 'Enter one tenant code per line. These codes will be offered as a dropdown when adding a new tenant.';
+$string['allowedshortcodesdesc'] = 'Define the list of possible tenant codes. On the Add tenant screen, the tenant code field will use this list as a dropdown.';
+$string['allowedshortcodessaved'] = 'Allowed tenant code list saved.';
+$string['errorallowedshortcodesinvalid'] = 'Invalid tenant code "{$a}". Use letters, numbers and underscores only.';
 $string['host'] = 'HTTP host';
 $string['host_help'] = 'For subdomain tenants: exact HTTP Host (e.g. school1.example.com). For path-style URLs on the same domain as the parent, use a unique placeholder host per tenant (e.g. mattan.path.local) that never appears in real requests — resolution uses /local/multitenancy/users/{code}/ and a cookie instead.';
 $string['wwwroot'] = 'Tenant wwwroot';
@@ -46,6 +53,7 @@ $string['dbpass'] = 'Database password';
 $string['dbprefix'] = 'Table prefix';
 $string['dbtype'] = 'Database type';
 $string['dblibrary'] = 'Database library';
+$string['enabled'] = 'Enabled';
 $string['dboptions'] = 'dboptions (JSON)';
 $string['dboptions_help'] = 'Optional JSON object merged into $CFG->dboptions for this tenant. Leave empty to inherit defaults from config.php.';
 $string['sortorder'] = 'Sort order';
@@ -58,7 +66,7 @@ $string['copycoursesdata_help'] = 'Enabled: full tenant copy including all cours
 $string['dbprovisioned'] = 'Tenant database "{$a}" was initialized from the parent database.';
 $string['dbprovisionednocourses'] = 'Tenant database "{$a}" was initialized from the parent database without copying non-frontpage course data.';
 $string['dbprovisionskippednotempty'] = 'Tenant database "{$a}" already contains tables, so initialization was skipped.';
-$string['dbprovisionskippedunsupported'] = 'Automatic DB initialization is currently supported only for mysql-family drivers (current tenant dbtype: "{$a}").';
+$string['dbprovisionskippedunsupported'] = 'Automatic DB initialization is currently supported only for mysql-family and pgsql drivers (current tenant dbtype: "{$a}").';
 $string['dbprovisionfailed'] = 'Automatic tenant DB initialization failed: {$a}';
 $string['datarootautocreatefailed'] = 'Tenant dataroot could not be created automatically: {$a}. Create it manually and ensure web server write permissions.';
 $string['dbschemaautocreated'] = 'Tenant database schema exists and is ready: {$a}.';
@@ -90,7 +98,7 @@ Run from your Moodle root directory, e.g.:
   php local/multitenancy/cli/diagnose_gateway.php --shortcode=CODE
   php local/multitenancy/cli/diagnose_gateway.php -s CODE
 
-Checks: MULTITENANCY_REGISTRY_DIR, registry.php, tenant row, wwwroot URL, dataroot path, gateway index.php, DB connect (mysqli family), expected browser URL.
+Checks: MULTITENANCY_REGISTRY_DIR, registry.php, tenant row, wwwroot URL, dataroot path, gateway index.php, DB connect (mysql-family + pgsql), expected browser URL.
 
 ';
 $string['cli_diag_invalidshortcode'] = 'Invalid tenant code: {$a}';
@@ -114,7 +122,7 @@ $string['cli_diag_gatewayindexmissing'] = 'Gateway index.php missing: {$a} — s
 $string['cli_diag_gatewayindexok'] = 'Gateway index.php OK: {$a}';
 $string['cli_diag_gatewaystuboutdated'] = 'Gateway index.php differs from the plugin stub — save a tenant or use Rebuild registry to refresh it.';
 $string['cli_diag_dbconnectok'] = 'Database connection OK (database: {$a}).';
-$string['cli_diag_dbskipped'] = 'Database check skipped (driver: {$a}); only mysqli/mariadb/auroramysql are tested by this script.';
+$string['cli_diag_dbskipped'] = 'Database check skipped (driver: {$a}); only mysqli/mariadb/auroramysql/pgsql are tested by this script.';
 $string['cli_diag_dbconnectfail'] = 'Database connection failed: {$a}';
 $string['cli_diag_hintweb'] = 'Expected gateway URL in browser: {$a}';
 $string['cli_diag_summary_ok'] = 'All critical checks passed. If the browser still shows a blank page, check: web server SCRIPT_NAME vs REQUEST_URI, HTTPS/cookie Secure, PHP/web error logs, and the browser Network tab (empty 302/500).';
