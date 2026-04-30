@@ -18,7 +18,10 @@ namespace local_multitenancy;
 
 defined('MOODLE_INTERNAL') || die();
 
+require_once(__DIR__ . '/../lib.php');
+
 use core\hook\output\before_standard_footer_html_generation;
+use core\hook\output\before_standard_top_of_body_html_generation;
 
 /**
  * Hook callbacks for local_multitenancy.
@@ -28,6 +31,13 @@ use core\hook\output\before_standard_footer_html_generation;
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class hook_callbacks {
+    /**
+     * @param before_standard_top_of_body_html_generation $hook
+     * @return void
+     */
+    public static function before_standard_top_of_body_html_generation(before_standard_top_of_body_html_generation $hook): void {
+        $hook->add_html(\local_multitenancy_login_tenant_picker_html());
+    }
 
     /**
      * @param before_standard_footer_html_generation $hook

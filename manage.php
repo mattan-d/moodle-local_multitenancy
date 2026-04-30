@@ -79,7 +79,7 @@ $table->head = [
     get_string('host', 'local_multitenancy'),
     get_string('wwwroot', 'local_multitenancy'),
     get_string('dbname', 'local_multitenancy'),
-    get_string('enabled', 'core'),
+    get_string('enabled', 'local_multitenancy'),
     get_string('actions'),
 ];
 $table->attributes['class'] = 'generaltable';

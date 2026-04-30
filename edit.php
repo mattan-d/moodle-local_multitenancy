@@ -195,13 +195,6 @@ $form = new \local_multitenancy\form\tenant_edit_form(null, [
 
 if ($record) {
     $data = (array) $record;
-    if (!empty($record->dboptions)) {
-        $decoded = json_decode($record->dboptions, true);
-        $data['dboptions'] = (json_last_error() === JSON_ERROR_NONE && is_array($decoded))
-            ? json_encode($decoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) : $record->dboptions;
-    } else {
-        $data['dboptions'] = '';
-    }
     $form->set_data($data);
 }
 
@@ -228,12 +221,6 @@ if ($data = $form->get_data()) {
     $row->dblibrary = $generateddb['dblibrary'];
     $row->enabled = !empty($data->enabled) ? 1 : 0;
     $row->sortorder = (int) $data->sortorder;
-    $opts = trim($data->dboptions ?? '');
-    if ($opts === '') {
-        $row->dboptions = null;
-    } else {
-        $row->dboptions = $opts;
-    }
 
     if (!empty($data->id)) {
         $row->id = $data->id;

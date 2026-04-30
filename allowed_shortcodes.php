@@ -52,7 +52,7 @@ if ($data = $form->get_data()) {
     }
     set_config('allowedshortcodes', implode("\n", array_keys($unique)), 'local_multitenancy');
     \core\notification::success(get_string('allowedshortcodessaved', 'local_multitenancy'));
-    redirect(new moodle_url('/local/multitenancy/allowed_shortcodes.php'));
+    redirect(new moodle_url('/local/multitenancy/manage.php'));
 }
 
 $form->set_data(['allowedshortcodes' => $existing]);
