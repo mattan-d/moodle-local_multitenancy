@@ -1,9 +1,16 @@
 /* Fallback until JS moves the banner (output before fixed-top navbar in layout). */
-#page-wrapper > .local-multitenancy-midurim {
+#page-wrapper > .local-multitenancy-midurim:not([data-local-multitenancy-placed="1"]) {
     margin-top: 4.5rem;
+}
+
+#region-main > .local-multitenancy-midurim,
+#page .main-inner > .local-multitenancy-midurim {
+    margin-top: 0;
 }
 
 .local-multitenancy-midurim {
     width: 100%;
     box-sizing: border-box;
+    position: relative;
+    z-index: 1;
 }

@@ -16,18 +16,25 @@
 
 defined('MOODLE_INTERNAL') || die();
 
-$callbacks = [
-    [
+$callbacks = [];
+
+if (class_exists(\core\hook\output\before_standard_head_html_generation::class)) {
+    $callbacks[] = [
         'hook' => \core\hook\output\before_standard_head_html_generation::class,
         'callback' => \local_multitenancy\hook_callbacks::class . '::before_standard_head_html_generation',
-    ],
-    [
+    ];
+}
+
+if (class_exists(\core\hook\output\before_standard_top_of_body_html_generation::class)) {
+    $callbacks[] = [
         'hook' => \core\hook\output\before_standard_top_of_body_html_generation::class,
         'callback' => \local_multitenancy\hook_callbacks::class . '::before_standard_top_of_body_html_generation',
-    ],
-    [
+    ];
+}
+
+if (class_exists(\core\hook\output\before_standard_footer_html_generation::class)) {
+    $callbacks[] = [
         'hook' => \core\hook\output\before_standard_footer_html_generation::class,
         'callback' => \local_multitenancy\hook_callbacks::class . '::before_standard_footer_html_generation',
-    ],
-];
-
+    ];
+}

@@ -169,23 +169,32 @@ function local_multitenancy_midurim_banner_register_assets(): void {
     $PAGE->requires->css('/local/multitenancy/styles/midurim.css');
     $PAGE->requires->js_amd_inline(<<<'JS'
 (function() {
-    var banner = document.querySelector('#page-wrapper > .local-multitenancy-midurim');
-    if (!banner) {
-        return;
-    }
-    var pageinner = document.querySelector('#page .main-inner');
-    if (pageinner) {
-        var toggles = pageinner.querySelector('.drawer-toggles');
-        if (toggles) {
-            toggles.after(banner);
+    function relocateMidurimBanner() {
+        var banner = document.querySelector('.local-multitenancy-midurim');
+        if (!banner || banner.getAttribute('data-local-multitenancy-placed') === '1') {
             return;
         }
-        pageinner.prepend(banner);
-        return;
+        var regionmain = document.getElementById('region-main');
+        if (regionmain) {
+            regionmain.insertBefore(banner, regionmain.firstChild);
+            banner.setAttribute('data-local-multitenancy-placed', '1');
+            return;
+        }
+        var pageinner = document.querySelector('#page .main-inner');
+        if (pageinner) {
+            var toggles = pageinner.querySelector('.drawer-toggles');
+            if (toggles) {
+                toggles.after(banner);
+            } else {
+                pageinner.prepend(banner);
+            }
+            banner.setAttribute('data-local-multitenancy-placed', '1');
+        }
     }
-    var regionmain = document.getElementById('region-main');
-    if (regionmain) {
-        regionmain.prepend(banner);
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', relocateMidurimBanner);
+    } else {
+        relocateMidurimBanner();
     }
 })();
 JS
@@ -366,4 +375,23 @@ function local_multitenancy_login_tenant_picker_html(): string {
             'style' => 'margin-top:12px;padding:12px;border:1px solid #d0d7de;border-radius:6px;background:#f8f9fa;',
         ]
     );
+}
+
+/**
+ * Legacy head callback (Moodle 4.0–4.3): register midurim CSS/JS before &lt;head&gt; is sent.
+ *
+ * @return string
+ */
+function local_multitenancy_before_standard_html_head() {
+    local_multitenancy_midurim_banner_register_assets();
+    return '';
+}
+
+/**
+ * Legacy top-of-body callback (Moodle 4.0–4.3): midurim banner and login tenant picker.
+ *
+ * @return string
+ */
+function local_multitenancy_before_standard_top_of_body_html() {
+    return local_multitenancy_midurim_banner_html() . local_multitenancy_login_tenant_picker_html();
 }
