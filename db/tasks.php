@@ -14,18 +14,16 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
-/**
- * Version details.
- *
- * @package    local_multitenancy
- * @copyright  2026
- * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
- */
-
 defined('MOODLE_INTERNAL') || die();
 
-$plugin->version   = 2026041511;
-$plugin->requires  = 2022112800;
-$plugin->component = 'local_multitenancy';
-$plugin->maturity  = MATURITY_ALPHA;
-$plugin->release   = '0.1.0';
+$tasks = [
+    [
+        'classname' => 'local_multitenancy\task\sync_parent_admins',
+        'blocking' => 0,
+        'minute' => '*/15',
+        'hour' => '*',
+        'day' => '*',
+        'month' => '*',
+        'dayofweek' => '*',
+    ],
+];

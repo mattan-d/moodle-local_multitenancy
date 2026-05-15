@@ -40,6 +40,192 @@ function local_multitenancy_string_or_default(string $identifier, string $fallba
 }
 
 /**
+ * Resolve active tenant shortcode for the current request (cookie or gateway entry).
+ *
+ * @return string Empty when not in a tenant context.
+ */
+function local_multitenancy_active_tenant_shortcode(): string {
+    if (!empty($_COOKIE['local_mt_sc'])) {
+        $code = (string) $_COOKIE['local_mt_sc'];
+        if (preg_match('/^[a-zA-Z0-9_-]+$/', $code)) {
+            return $code;
+        }
+    }
+    if (defined('LOCAL_MULTITENANCY_ENTRY_SHORTCODE')) {
+        $code = (string) LOCAL_MULTITENANCY_ENTRY_SHORTCODE;
+        if (preg_match('/^[a-zA-Z0-9_-]+$/', $code)) {
+            return $code;
+        }
+    }
+    return '';
+}
+
+/**
+ * Load tenant row fragment from registry.php by shortcode.
+ *
+ * @param string $shortcode
+ * @return array<string, mixed>|null
+ */
+function local_multitenancy_registry_tenant_by_shortcode(string $shortcode): ?array {
+    if ($shortcode === '' || !defined('MULTITENANCY_REGISTRY_DIR') || !MULTITENANCY_REGISTRY_DIR) {
+        return null;
+    }
+    $registryfile = rtrim((string) MULTITENANCY_REGISTRY_DIR, '/\\') . '/registry.php';
+    if (!is_readable($registryfile)) {
+        return null;
+    }
+    $map = include $registryfile;
+    if (!is_array($map)) {
+        return null;
+    }
+    foreach ($map as $row) {
+        if (is_array($row) && !empty($row['shortcode']) && (string) $row['shortcode'] === $shortcode) {
+            return $row;
+        }
+    }
+    return null;
+}
+
+/**
+ * Whether the midurim banner should be shown and its raw tenant data.
+ *
+ * @return array{midurim:string,midurimformat:int}|null
+ */
+function local_multitenancy_midurim_banner_context(): ?array {
+    static $resolved = false;
+    static $result = null;
+
+    if ($resolved) {
+        return $result;
+    }
+    $resolved = true;
+
+    global $PAGE;
+
+    $path = '';
+    if (!empty($PAGE->url)) {
+        $path = (string) $PAGE->url->get_path();
+    }
+    if ($path === '' && !empty($_SERVER['SCRIPT_NAME'])) {
+        $path = (string) $_SERVER['SCRIPT_NAME'];
+    }
+    if (function_exists('local_multitenancy_path_is_parent_admin') &&
+            local_multitenancy_path_is_parent_admin($path)) {
+        return null;
+    }
+
+    if (in_array($PAGE->pagelayout, ['embedded', 'popup', 'print', 'maintenance'], true)) {
+        return null;
+    }
+
+    $shortcode = local_multitenancy_active_tenant_shortcode();
+    if ($shortcode === '') {
+        return null;
+    }
+
+    $tenantrow = local_multitenancy_registry_tenant_by_shortcode($shortcode);
+    if ($tenantrow === null) {
+        global $DB;
+        $record = $DB->get_record('local_multitenancy_tenant', ['shortcode' => $shortcode]);
+        if (!$record || empty($record->enabled)) {
+            return null;
+        }
+        $tenantrow = [
+            'enabled' => (int) $record->enabled,
+            'midurim' => (string) ($record->midurim ?? ''),
+            'midurimformat' => (int) ($record->midurimformat ?? FORMAT_HTML),
+        ];
+    }
+
+    if (empty($tenantrow['enabled'])) {
+        return null;
+    }
+
+    $content = trim((string) ($tenantrow['midurim'] ?? ''));
+    if ($content === '') {
+        return null;
+    }
+
+    $result = [
+        'midurim' => $content,
+        'midurimformat' => (int) ($tenantrow['midurimformat'] ?? FORMAT_HTML),
+    ];
+    return $result;
+}
+
+/**
+ * Register CSS/JS for the midurim banner (must run before head is printed).
+ *
+ * @return void
+ */
+function local_multitenancy_midurim_banner_register_assets(): void {
+    static $registered = false;
+    if ($registered || local_multitenancy_midurim_banner_context() === null) {
+        return;
+    }
+    $registered = true;
+
+    global $PAGE;
+    $PAGE->requires->css('/local/multitenancy/styles/midurim.css');
+    $PAGE->requires->js_amd_inline(<<<'JS'
+(function() {
+    var banner = document.querySelector('#page-wrapper > .local-multitenancy-midurim');
+    if (!banner) {
+        return;
+    }
+    var pageinner = document.querySelector('#page .main-inner');
+    if (pageinner) {
+        var toggles = pageinner.querySelector('.drawer-toggles');
+        if (toggles) {
+            toggles.after(banner);
+            return;
+        }
+        pageinner.prepend(banner);
+        return;
+    }
+    var regionmain = document.getElementById('region-main');
+    if (regionmain) {
+        regionmain.prepend(banner);
+    }
+})();
+JS
+    );
+}
+
+/**
+ * HTML banner (jumbotron-style) with tenant "midurim" content at the top of each page.
+ *
+ * @return string
+ */
+function local_multitenancy_midurim_banner_html(): string {
+    static $alreadyrendered = false;
+    if ($alreadyrendered) {
+        return '';
+    }
+
+    $bannercontext = local_multitenancy_midurim_banner_context();
+    if ($bannercontext === null) {
+        return '';
+    }
+
+    $body = format_text($bannercontext['midurim'], $bannercontext['midurimformat'], [
+        'context' => context_system::instance(),
+        'noclean' => true,
+        'overflowdiv' => true,
+    ]);
+
+    $alreadyrendered = true;
+    return html_writer::div(
+        $body,
+        'local-multitenancy-midurim rounded-3 p-4 mb-3 bg-light border w-100',
+        [
+            'role' => 'region',
+            'aria-label' => get_string('midurim', 'local_multitenancy'),
+        ]
+    );
+}
+
+/**
  * Build current tenant indicator and leave link HTML.
  *
  * @return string
@@ -135,7 +321,13 @@ function local_multitenancy_login_tenant_picker_html(): string {
         return '';
     }
 
-    $records = $DB->get_records('local_multitenancy_tenant', ['enabled' => 1], 'sortorder ASC, id ASC', 'id,shortcode,name');
+    $records = $DB->get_records_select(
+        'local_multitenancy_tenant',
+        'enabled = 1 AND showonlogin = 1',
+        null,
+        'sortorder ASC, id ASC',
+        'id,shortcode,name'
+    );
     if (!$records) {
         return '';
     }

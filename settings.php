@@ -57,4 +57,11 @@ if ($hassiteconfig) {
         new moodle_url('/local/multitenancy/allowed_shortcodes.php'),
         'local/multitenancy:manage'
     ));
+
+    $ADMIN->add('localplugins', new admin_externalpage(
+        'local_multitenancy_users',
+        get_string('manageusers', 'local_multitenancy'),
+        new moodle_url('/local/multitenancy/users_manage.php'),
+        'local/multitenancy:manage'
+    ));
 }

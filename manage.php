@@ -25,6 +25,8 @@
 require_once(__DIR__ . '/../../config.php');
 require_once($CFG->libdir . '/adminlib.php');
 
+global $DB, $PAGE, $OUTPUT, $CFG;
+
 admin_externalpage_setup('local_multitenancy_manage');
 
 require_capability('local/multitenancy:manage', context_system::instance());
@@ -57,6 +59,8 @@ $addurl = new moodle_url('/local/multitenancy/edit.php');
 echo $OUTPUT->single_button($addurl, get_string('addtenant', 'local_multitenancy'), 'get');
 $allowedlisturl = new moodle_url('/local/multitenancy/allowed_shortcodes.php');
 echo $OUTPUT->single_button($allowedlisturl, get_string('manageallowedshortcodes', 'local_multitenancy'), 'get');
+$usersurl = new moodle_url('/local/multitenancy/users_manage.php');
+echo $OUTPUT->single_button($usersurl, get_string('manageusers', 'local_multitenancy'), 'get');
 
 if (!empty($registrydir)) {
     $rebuildurl = new moodle_url('/local/multitenancy/manage.php', ['rebuild' => 1]);
@@ -80,6 +84,7 @@ $table->head = [
     get_string('wwwroot', 'local_multitenancy'),
     get_string('dbname', 'local_multitenancy'),
     get_string('enabled', 'local_multitenancy'),
+    get_string('columnprovision', 'local_multitenancy'),
     get_string('actions'),
 ];
 $table->attributes['class'] = 'generaltable';
@@ -91,6 +96,14 @@ foreach ($tenants as $t) {
     $actions = $OUTPUT->action_icon($edit, new pix_icon('t/edit', get_string('edit'))) .
         $OUTPUT->action_icon($delete, new pix_icon('t/delete', get_string('delete')));
     $gateway = new moodle_url('/local/multitenancy/users/' . rawurlencode($t->shortcode) . '/');
+    $provisionlabel = \local_multitenancy\tenant_provisioner::status_label($t);
+    if (!empty($t->provisionerror)) {
+        $provisionlabel .= ' ' . html_writer::tag(
+            'span',
+            '(' . s($t->provisionerror) . ')',
+            ['class' => 'text-danger', 'title' => s($t->provisionerror)]
+        );
+    }
     $table->data[] = [
         s($t->shortcode),
         format_string($t->name),
@@ -99,6 +112,7 @@ foreach ($tenants as $t) {
         html_writer::link($t->wwwroot, s($t->wwwroot), ['target' => '_blank']),
         s($t->dbname),
         $t->enabled ? get_string('yes') : get_string('no'),
+        $provisionlabel,
         $actions,
     ];
 }

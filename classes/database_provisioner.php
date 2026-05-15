@@ -16,6 +16,8 @@
 
 namespace local_multitenancy;
 
+use local_multitenancy\db\postgres_helper;
+
 defined('MOODLE_INTERNAL') || die();
 
 /**
@@ -61,7 +63,9 @@ class database_provisioner {
         }
 
         $clidetail = '';
-        if ($copycourses && self::can_clone_via_cli($dbtype)) {
+        // Course filtering exists only in the PHP fallback clone path.
+        $trycli = self::can_clone_via_cli($dbtype) && $copycourses;
+        if ($trycli) {
             $cliresult = self::clone_via_cli($tenant, $tenantdbname);
             if ($cliresult['ok']) {
                 $adminreset = self::reset_to_initial_admin($tenant, $tenantdbname);
@@ -101,8 +105,18 @@ class database_provisioner {
 
         $dbtype = (string) ($tenant->dbtype ?? '');
         if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
-            $sourceargs = self::build_pg_args((string) $CFG->dbhost, (string) $CFG->dbuser, (string) $CFG->dbname);
-            $targetargs = self::build_pg_args((string) ($tenant->dbhost ?? ''), (string) ($tenant->dbuser ?? ''), $tenantdbname);
+            $sourceargs = postgres_helper::build_cli_args(
+                (string) $CFG->dbhost,
+                (string) $CFG->dbuser,
+                (string) $CFG->dbname,
+                postgres_helper::dboptions_for_parent()
+            );
+            $targetargs = postgres_helper::build_cli_args(
+                (string) ($tenant->dbhost ?? ''),
+                (string) ($tenant->dbuser ?? ''),
+                $tenantdbname,
+                postgres_helper::dboptions_for_tenant($tenant)
+            );
             $sourceenv = self::build_pg_password_env((string) $CFG->dbpass);
             $targetenv = self::build_pg_password_env((string) ($tenant->dbpass ?? ''));
             $cmd = trim($sourceenv . ' pg_dump --clean --if-exists --no-owner --no-privileges ' .
@@ -142,8 +156,12 @@ class database_provisioner {
      */
     private static function clone_via_php(\stdClass $tenant, string $tenantdbname, bool $copycourses): array {
         global $CFG;
-        if (!in_array((string) ($tenant->dbtype ?? ''), self::MYSQL_FAMILY, true)) {
-            return ['ok' => false, 'detail' => 'PHP fallback clone currently supports mysql-family only'];
+        $dbtype = (string) ($tenant->dbtype ?? '');
+        if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
+            return self::clone_via_php_pgsql($tenant, $tenantdbname, $copycourses);
+        }
+        if (!in_array($dbtype, self::MYSQL_FAMILY, true)) {
+            return ['ok' => false, 'detail' => 'PHP fallback clone unsupported dbtype: ' . $dbtype];
         }
 
         $sourceconn = @new \mysqli((string) $CFG->dbhost, (string) $CFG->dbuser, (string) $CFG->dbpass, (string) $CFG->dbname);
@@ -299,6 +317,230 @@ class database_provisioner {
     }
 
     /**
+     * PHP fallback clone for PostgreSQL (pg_dump CLI when available, else schema+data copy).
+     *
+     * @param \stdClass $tenant
+     * @param string $tenantdbname
+     * @param bool $copycourses
+     * @return array{ok:bool, detail:string}
+     */
+    private static function clone_via_php_pgsql(\stdClass $tenant, string $tenantdbname, bool $copycourses): array {
+        if (self::can_clone_via_cli('pgsql')) {
+            return self::clone_via_cli($tenant, $tenantdbname);
+        }
+        if (!function_exists('pg_connect')) {
+            return ['ok' => false, 'detail' => 'pgsql PHP extension not loaded'];
+        }
+
+        $sourceconn = postgres_helper::connect_parent();
+        $targetconn = postgres_helper::connect_tenant($tenant, $tenantdbname);
+        if (!$sourceconn) {
+            return ['ok' => false, 'detail' => 'Parent PostgreSQL connect failed for PHP clone'];
+        }
+        if (!$targetconn) {
+            pg_close($sourceconn);
+            return ['ok' => false, 'detail' => 'Tenant PostgreSQL connect failed for PHP clone'];
+        }
+
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(0);
+        }
+
+        @pg_query($targetconn, 'SET session_replication_role = replica');
+
+        $prefix = (string) ($tenant->dbprefix ?? 'mdl_');
+        $tables = postgres_helper::list_prefixed_tables($sourceconn, $prefix);
+        if (!$tables) {
+            pg_close($sourceconn);
+            pg_close($targetconn);
+            return ['ok' => false, 'detail' => 'Parent PostgreSQL DB has no tables to clone'];
+        }
+
+        foreach ($tables as $table) {
+            $qtable = postgres_helper::quote_ident($table);
+            if (!@pg_query($targetconn, 'DROP TABLE IF EXISTS ' . $qtable . ' CASCADE')) {
+                pg_close($sourceconn);
+                pg_close($targetconn);
+                return ['ok' => false, 'detail' => 'DROP TABLE failed for ' . $table . ': ' . pg_last_error($targetconn)];
+            }
+
+            $ddl = self::pgsql_build_create_table($sourceconn, $table);
+            if ($ddl === null || !@pg_query($targetconn, $ddl)) {
+                pg_close($sourceconn);
+                pg_close($targetconn);
+                return ['ok' => false, 'detail' => 'CREATE TABLE failed for ' . $table . ': ' . pg_last_error($targetconn)];
+            }
+
+            $datares = @pg_query($sourceconn, 'SELECT * FROM ' . $qtable);
+            if (!$datares) {
+                pg_close($sourceconn);
+                pg_close($targetconn);
+                return ['ok' => false, 'detail' => 'SELECT failed for ' . $table . ': ' . pg_last_error($sourceconn)];
+            }
+
+            $columns = [];
+            $numfields = pg_num_fields($datares);
+            for ($i = 0; $i < $numfields; $i++) {
+                $columns[] = postgres_helper::quote_ident((string) pg_field_name($datares, $i));
+            }
+            $courseindexes = [];
+            $categoryindexes = [];
+            $idindex = null;
+            for ($i = 0; $i < $numfields; $i++) {
+                $fname = (string) pg_field_name($datares, $i);
+                if ($fname === 'course' || $fname === 'courseid') {
+                    $courseindexes[] = $i;
+                }
+                if ($fname === 'category' || $fname === 'categoryid') {
+                    $categoryindexes[] = $i;
+                }
+                if ($fname === 'id') {
+                    $idindex = $i;
+                }
+            }
+            $columnlist = implode(',', $columns);
+
+            $batch = [];
+            $batchsize = 100;
+            while ($row = pg_fetch_row($datares)) {
+                if (!self::should_copy_row($table, $prefix, $row, $courseindexes, $categoryindexes, $idindex, $copycourses)) {
+                    continue;
+                }
+                $values = [];
+                foreach ($row as $idx => $value) {
+                    $values[] = self::pgsql_sql_value($targetconn, $value, pg_field_type($datares, (int) $idx));
+                }
+                $batch[] = '(' . implode(',', $values) . ')';
+                if (count($batch) >= $batchsize) {
+                    $sql = 'INSERT INTO ' . $qtable . ' (' . $columnlist . ') VALUES ' . implode(',', $batch);
+                    if (!@pg_query($targetconn, $sql)) {
+                        pg_free_result($datares);
+                        pg_close($sourceconn);
+                        pg_close($targetconn);
+                        return ['ok' => false, 'detail' => 'INSERT failed for ' . $table . ': ' . pg_last_error($targetconn)];
+                    }
+                    $batch = [];
+                }
+            }
+            pg_free_result($datares);
+
+            if (!empty($batch)) {
+                $sql = 'INSERT INTO ' . $qtable . ' (' . $columnlist . ') VALUES ' . implode(',', $batch);
+                if (!@pg_query($targetconn, $sql)) {
+                    pg_close($sourceconn);
+                    pg_close($targetconn);
+                    return ['ok' => false, 'detail' => 'INSERT failed for ' . $table . ': ' . pg_last_error($targetconn)];
+                }
+            }
+        }
+
+        @pg_query($targetconn, 'SET session_replication_role = DEFAULT');
+        pg_close($sourceconn);
+        pg_close($targetconn);
+        return ['ok' => true, 'detail' => ''];
+    }
+
+    /**
+     * @param resource $conn
+     * @param string $table
+     * @return string|null
+     */
+    private static function pgsql_build_create_table($conn, string $table): ?string {
+        $res = @pg_query_params(
+            $conn,
+            "SELECT column_name, udt_name, character_maximum_length, numeric_precision, numeric_scale, is_nullable, column_default
+               FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = $1
+              ORDER BY ordinal_position",
+            [$table]
+        );
+        if (!$res) {
+            return null;
+        }
+
+        $parts = [];
+        while ($col = pg_fetch_assoc($res)) {
+            $name = postgres_helper::quote_ident((string) $col['column_name']);
+            $type = self::pgsql_format_column_type($col);
+            $line = $name . ' ' . $type;
+            if (($col['is_nullable'] ?? '') === 'NO') {
+                $line .= ' NOT NULL';
+            }
+            $default = $col['column_default'] ?? null;
+            if ($default !== null && $default !== '' && strpos((string) $default, 'nextval(') === false) {
+                $line .= ' DEFAULT ' . $default;
+            }
+            $parts[] = $line;
+        }
+        pg_free_result($res);
+
+        if (!$parts) {
+            return null;
+        }
+        return 'CREATE TABLE ' . postgres_helper::quote_ident($table) . ' (' . implode(', ', $parts) . ')';
+    }
+
+    /**
+     * @param array<string, mixed> $col
+     * @return string
+     */
+    private static function pgsql_format_column_type(array $col): string {
+        $udt = (string) ($col['udt_name'] ?? 'text');
+        switch ($udt) {
+            case 'int2':
+                return 'smallint';
+            case 'int4':
+                return 'integer';
+            case 'int8':
+                return 'bigint';
+            case 'bool':
+                return 'boolean';
+            case 'varchar':
+                $len = (int) ($col['character_maximum_length'] ?? 0);
+                return $len > 0 ? 'character varying(' . $len . ')' : 'character varying';
+            case 'numeric':
+                $p = (int) ($col['numeric_precision'] ?? 0);
+                $s = (int) ($col['numeric_scale'] ?? 0);
+                return $p > 0 ? "numeric({$p},{$s})" : 'numeric';
+            case 'float4':
+                return 'real';
+            case 'float8':
+                return 'double precision';
+            case 'timestamp':
+                return 'timestamp without time zone';
+            case 'timestamptz':
+                return 'timestamp with time zone';
+            default:
+                return $udt;
+        }
+    }
+
+    /**
+     * @param resource $conn
+     * @param mixed $value
+     * @param string $pgtype
+     * @return string
+     */
+    private static function pgsql_sql_value($conn, $value, string $pgtype): string {
+        if ($value === null) {
+            return 'NULL';
+        }
+        if ($pgtype === 'bool') {
+            return ($value === true || $value === 't' || $value === '1' || $value === 1) ? 'TRUE' : 'FALSE';
+        }
+        if ($pgtype === 'bytea') {
+            return "'" . pg_escape_bytea($conn, (string) $value) . "'";
+        }
+        if (is_bool($value)) {
+            return $value ? 'TRUE' : 'FALSE';
+        }
+        if (is_int($value) || is_float($value)) {
+            return (string) $value;
+        }
+        return "'" . pg_escape_string($conn, (string) $value) . "'";
+    }
+
+    /**
      * @param string $table
      * @param string $prefix
      * @param array $row
@@ -416,19 +658,14 @@ class database_provisioner {
             return ['state' => 'error', 'detail' => 'pg_connect function is unavailable (pgsql extension not loaded)'];
         }
         $prefix = (string) ($tenant->dbprefix ?? 'mdl_');
-        $conn = @pg_connect(self::build_pg_conninfo(
-            (string) ($tenant->dbhost ?? ''),
-            (string) ($tenant->dbuser ?? ''),
-            (string) ($tenant->dbpass ?? ''),
-            $tenantdbname
-        ));
+        $conn = postgres_helper::connect_tenant($tenant, $tenantdbname);
         if (!$conn) {
             return ['state' => 'error', 'detail' => 'Tenant DB reconnect failed for admin reset'];
         }
 
-        $usertable = '"' . str_replace('"', '""', $prefix . 'user') . '"';
-        $configtable = '"' . str_replace('"', '""', $prefix . 'config') . '"';
-        $sessiontable = '"' . str_replace('"', '""', $prefix . 'sessions') . '"';
+        $usertable = postgres_helper::quote_ident($prefix . 'user');
+        $configtable = postgres_helper::quote_ident($prefix . 'config');
+        $sessiontable = postgres_helper::quote_ident($prefix . 'sessions');
         $hash = password_hash('Admin123!', PASSWORD_DEFAULT);
 
         if (!@pg_query($conn, "DELETE FROM {$usertable} WHERE id > 2")) {
@@ -468,6 +705,21 @@ class database_provisioner {
     }
 
     /**
+     * Whether the tenant database exists and has at least one table.
+     *
+     * @param \stdClass $tenant
+     * @return bool
+     */
+    public static function tenant_database_ready(\stdClass $tenant): bool {
+        $dbname = (string) ($tenant->dbname ?? '');
+        if ($dbname === '') {
+            return false;
+        }
+        $count = self::count_tables_for_tenant($tenant, $dbname);
+        return $count !== null && $count > 0;
+    }
+
+    /**
      * @param \stdClass $tenant
      * @param string $dbname
      * @return int|null
@@ -500,12 +752,7 @@ class database_provisioner {
         if (!function_exists('pg_connect')) {
             return null;
         }
-        $conn = @pg_connect(self::build_pg_conninfo(
-            (string) ($tenant->dbhost ?? ''),
-            (string) ($tenant->dbuser ?? ''),
-            (string) ($tenant->dbpass ?? ''),
-            $dbname
-        ));
+        $conn = postgres_helper::connect_tenant($tenant, $dbname);
         if (!$conn) {
             return null;
         }
@@ -569,25 +816,6 @@ class database_provisioner {
     }
 
     /**
-     * @param string $host
-     * @param string $user
-     * @param string $dbname
-     * @return string[]
-     */
-    private static function build_pg_args(string $host, string $user, string $dbname): array {
-        $args = [];
-        if ($host !== '') {
-            $args[] = escapeshellarg('--host=' . $host);
-        }
-        if ($user !== '') {
-            $args[] = escapeshellarg('--username=' . $user);
-        }
-        $args[] = escapeshellarg('--dbname=' . $dbname);
-        $args[] = escapeshellarg('--no-password');
-        return $args;
-    }
-
-    /**
      * @param string $password
      * @return string
      */
@@ -596,28 +824,6 @@ class database_provisioner {
             return '';
         }
         return 'PGPASSWORD=' . escapeshellarg($password);
-    }
-
-    /**
-     * @param string $host
-     * @param string $user
-     * @param string $pass
-     * @param string $dbname
-     * @return string
-     */
-    private static function build_pg_conninfo(string $host, string $user, string $pass, string $dbname): string {
-        $parts = [];
-        if ($host !== '') {
-            $parts[] = "host='" . str_replace("'", "\\'", $host) . "'";
-        }
-        if ($user !== '') {
-            $parts[] = "user='" . str_replace("'", "\\'", $user) . "'";
-        }
-        if ($pass !== '') {
-            $parts[] = "password='" . str_replace("'", "\\'", $pass) . "'";
-        }
-        $parts[] = "dbname='" . str_replace("'", "\\'", $dbname) . "'";
-        return implode(' ', $parts);
     }
 }
 

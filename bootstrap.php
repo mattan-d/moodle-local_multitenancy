@@ -152,23 +152,41 @@ function local_multitenancy_build_public_wwwroot_from_prefix(string $pathprefix)
 }
 
 /**
- * @param string $requesturi
- * @return bool True if this request must use parent site config only.
+ * Whether a URL path must always use the parent (hub) site config.
+ *
+ * @param string $path
+ * @return bool
  */
-function local_multitenancy_request_is_parent_admin(string $requesturi): bool {
-    $path = parse_url($requesturi, PHP_URL_PATH);
-    $query = parse_url($requesturi, PHP_URL_QUERY);
+function local_multitenancy_path_is_parent_admin(string $path): bool {
     if (!is_string($path) || $path === '') {
         return false;
     }
     if (preg_match('#/(?:install|upgrade)\.php$#', $path)) {
         return true;
     }
-    if (preg_match('#/local/multitenancy/(?:manage|edit|delete)\.php#', $path)) {
+    // Any plugin PHP script except tenant gateway stubs under users/{code}/.
+    if (preg_match('#/local/multitenancy/(?!users/)[a-zA-Z0-9_-]+\.php$#', $path)) {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * @param string $requesturi
+ * @return bool True if this request must use parent site config only.
+ */
+function local_multitenancy_request_is_parent_admin(string $requesturi): bool {
+    $path = parse_url($requesturi, PHP_URL_PATH);
+    $query = parse_url($requesturi, PHP_URL_QUERY);
+    if (local_multitenancy_path_is_parent_admin($path)) {
+        return true;
+    }
+    $script = $_SERVER['SCRIPT_NAME'] ?? '';
+    if (local_multitenancy_path_is_parent_admin($script)) {
         return true;
     }
     // Keep plugin management/settings on parent site even when tenant cookie is set.
-    if (strpos($path, '/admin/settings.php') !== false && is_string($query)) {
+    if (is_string($path) && strpos($path, '/admin/settings.php') !== false && is_string($query)) {
         parse_str($query, $q);
         if (!empty($q['section']) && (string) $q['section'] === 'local_multitenancy') {
             return true;

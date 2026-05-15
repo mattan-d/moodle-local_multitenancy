@@ -1,0 +1,9 @@
+/* Fallback until JS moves the banner (output before fixed-top navbar in layout). */
+#page-wrapper > .local-multitenancy-midurim {
+    margin-top: 4.5rem;
+}
+
+.local-multitenancy-midurim {
+    width: 100%;
+    box-sizing: border-box;
+}

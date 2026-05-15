@@ -69,6 +69,8 @@ class registry_writer {
                 'shortcode' => $r->shortcode,
                 'name' => $r->name,
                 'enabled' => (int) $r->enabled,
+                'midurim' => (string) ($r->midurim ?? ''),
+                'midurimformat' => (int) ($r->midurimformat ?? FORMAT_HTML),
                 'wwwroot' => $wwwroot,
                 'dataroot' => $r->dataroot,
                 'dbhost' => $r->dbhost,

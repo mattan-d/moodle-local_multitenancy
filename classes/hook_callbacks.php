@@ -21,6 +21,7 @@ defined('MOODLE_INTERNAL') || die();
 require_once(__DIR__ . '/../lib.php');
 
 use core\hook\output\before_standard_footer_html_generation;
+use core\hook\output\before_standard_head_html_generation;
 use core\hook\output\before_standard_top_of_body_html_generation;
 
 /**
@@ -32,10 +33,19 @@ use core\hook\output\before_standard_top_of_body_html_generation;
  */
 class hook_callbacks {
     /**
+     * @param before_standard_head_html_generation $hook
+     * @return void
+     */
+    public static function before_standard_head_html_generation(before_standard_head_html_generation $hook): void {
+        \local_multitenancy_midurim_banner_register_assets();
+    }
+
+    /**
      * @param before_standard_top_of_body_html_generation $hook
      * @return void
      */
     public static function before_standard_top_of_body_html_generation(before_standard_top_of_body_html_generation $hook): void {
+        $hook->add_html(\local_multitenancy_midurim_banner_html());
         $hook->add_html(\local_multitenancy_login_tenant_picker_html());
     }
 

@@ -40,7 +40,17 @@ class tenant_edit_form extends \moodleform {
         $mform->setType('id', PARAM_INT);
         $mform->setDefault('id', 0);
 
-        if (!$editing && !empty($allowed)) {
+        $existing = $this->_customdata['existing'] ?? null;
+        if ($editing && $existing) {
+            $mform->addElement(
+                'static',
+                'shortcode_display',
+                get_string('shortcode', 'local_multitenancy'),
+                s((string) $existing->shortcode)
+            );
+            $mform->addElement('hidden', 'shortcode', (string) $existing->shortcode);
+            $mform->setType('shortcode', PARAM_ALPHANUMEXT);
+        } else if (!empty($allowed)) {
             $mform->addElement('select', 'shortcode', get_string('shortcode', 'local_multitenancy'), $allowed);
             $mform->addRule('shortcode', null, 'required', null, 'client');
             $mform->addHelpButton('shortcode', 'shortcode', 'local_multitenancy');
@@ -58,16 +68,33 @@ class tenant_edit_form extends \moodleform {
         $mform->addElement('advcheckbox', 'enabled', get_string('enabled', 'local_multitenancy'));
         $mform->setDefault('enabled', 1);
 
+        $mform->addElement('advcheckbox', 'showonlogin', get_string('showonlogin', 'local_multitenancy'));
+        $mform->addHelpButton('showonlogin', 'showonlogin', 'local_multitenancy');
+        $mform->setDefault('showonlogin', 1);
+
         $mform->addElement('text', 'sortorder', get_string('sortorder', 'local_multitenancy'), ['size' => 6]);
         $mform->setType('sortorder', PARAM_INT);
         $mform->setDefault('sortorder', 0);
 
-        $mform->addElement('advcheckbox', 'initdbfromparent', get_string('initdbfromparent', 'local_multitenancy'));
-        $mform->addHelpButton('initdbfromparent', 'initdbfromparent', 'local_multitenancy');
-        $mform->setDefault('initdbfromparent', 1);
-        $mform->addElement('advcheckbox', 'copycoursesdata', get_string('copycoursesdata', 'local_multitenancy'));
-        $mform->addHelpButton('copycoursesdata', 'copycoursesdata', 'local_multitenancy');
-        $mform->setDefault('copycoursesdata', 1);
+        $context = \context_system::instance();
+        $editoroptions = [
+            'subdirs' => 0,
+            'maxbytes' => 0,
+            'maxfiles' => 0,
+            'context' => $context,
+        ];
+        $mform->addElement('editor', 'midurim_editor', get_string('midurim', 'local_multitenancy'), null, $editoroptions);
+        $mform->setType('midurim_editor', PARAM_RAW);
+        $mform->addHelpButton('midurim_editor', 'midurim', 'local_multitenancy');
+
+        if (!$editing) {
+            $mform->addElement('advcheckbox', 'initdbfromparent', get_string('initdbfromparent', 'local_multitenancy'));
+            $mform->addHelpButton('initdbfromparent', 'initdbfromparent', 'local_multitenancy');
+            $mform->setDefault('initdbfromparent', 1);
+            $mform->addElement('advcheckbox', 'copycoursesdata', get_string('copycoursesdata', 'local_multitenancy'));
+            $mform->addHelpButton('copycoursesdata', 'copycoursesdata', 'local_multitenancy');
+            $mform->setDefault('copycoursesdata', 1);
+        }
 
         $this->add_action_buttons();
     }

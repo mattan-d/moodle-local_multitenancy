@@ -61,5 +61,59 @@ function xmldb_local_multitenancy_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026041460, 'local', 'multitenancy');
     }
 
+    if ($oldversion < 2026041470) {
+        $table = new xmldb_table('local_multitenancy_tenant');
+        $field = new xmldb_field('showonlogin', XMLDB_TYPE_INTEGER, '1', null, XMLDB_NOTNULL, null, '1');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+        upgrade_plugin_savepoint(true, 2026041470, 'local', 'multitenancy');
+    }
+
+    if ($oldversion < 2026041480) {
+        upgrade_plugin_savepoint(true, 2026041480, 'local', 'multitenancy');
+    }
+
+    if ($oldversion < 2026041490) {
+        $table = new xmldb_table('local_multitenancy_tenant');
+        $statusfield = new xmldb_field('provisionstatus', XMLDB_TYPE_CHAR, '20', null, XMLDB_NOTNULL, null, 'complete');
+        if (!$dbman->field_exists($table, $statusfield)) {
+            $dbman->add_field($table, $statusfield);
+        }
+        $errorfield = new xmldb_field('provisionerror', XMLDB_TYPE_TEXT, null, null, null, null, null);
+        if (!$dbman->field_exists($table, $errorfield)) {
+            $dbman->add_field($table, $errorfield);
+        }
+        upgrade_plugin_savepoint(true, 2026041490, 'local', 'multitenancy');
+    }
+
+    if ($oldversion < 2026041500) {
+        upgrade_plugin_savepoint(true, 2026041500, 'local', 'multitenancy');
+    }
+
+    if ($oldversion < 2026041510) {
+        $table = new xmldb_table('local_multitenancy_tenant');
+        $midurimfield = new xmldb_field('midurim', XMLDB_TYPE_TEXT, null, null, null, null, null);
+        if (!$dbman->field_exists($table, $midurimfield)) {
+            $dbman->add_field($table, $midurimfield);
+        }
+        $formatfield = new xmldb_field('midurimformat', XMLDB_TYPE_INTEGER, '2', null, XMLDB_NOTNULL, null, '1');
+        if (!$dbman->field_exists($table, $formatfield)) {
+            $dbman->add_field($table, $formatfield);
+        }
+        upgrade_plugin_savepoint(true, 2026041510, 'local', 'multitenancy');
+    }
+
+    if ($oldversion < 2026041511) {
+        $DB->execute(
+            "UPDATE {local_multitenancy_tenant} SET midurim = '' WHERE midurim IS NULL"
+        );
+        $DB->execute(
+            "UPDATE {local_multitenancy_tenant} SET midurimformat = ? WHERE midurimformat IS NULL",
+            [FORMAT_HTML]
+        );
+        upgrade_plugin_savepoint(true, 2026041511, 'local', 'multitenancy');
+    }
+
     return true;
 }

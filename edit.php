@@ -25,6 +25,8 @@
 require_once(__DIR__ . '/../../config.php');
 require_once($CFG->libdir . '/adminlib.php');
 
+global $DB, $PAGE, $OUTPUT, $CFG;
+
 $id = optional_param('id', 0, PARAM_INT);
 
 admin_externalpage_setup('local_multitenancy_manage');
@@ -83,98 +85,6 @@ $buildtenantdbvalues = static function(string $shortcode) use ($CFG): array {
     ];
 };
 
-$ensuretenantdbschema = static function(array $dbvalues) use ($CFG): ?string {
-    $dbtype = (string) ($dbvalues['dbtype'] ?? '');
-    if (in_array($dbtype, ['mysqli', 'mariadb', 'auroramysql'], true)) {
-        $conn = @new mysqli((string) $dbvalues['dbhost'], (string) $dbvalues['dbuser'], (string) $dbvalues['dbpass']);
-        if ($conn->connect_errno) {
-            return 'DB connect failed: ' . $conn->connect_error;
-        }
-        $parentdb = $conn->real_escape_string((string) $CFG->dbname);
-        $cs = 'utf8mb4';
-        $coll = 'utf8mb4_unicode_ci';
-        $res = $conn->query("SELECT DEFAULT_CHARACTER_SET_NAME AS cs, DEFAULT_COLLATION_NAME AS coll FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '{$parentdb}'");
-        if ($res && ($row = $res->fetch_assoc())) {
-            if (!empty($row['cs'])) {
-                $cs = (string) $row['cs'];
-            }
-            if (!empty($row['coll'])) {
-                $coll = (string) $row['coll'];
-            }
-        }
-        if ($res) {
-            $res->close();
-        }
-        $dbname = '`' . str_replace('`', '``', (string) $dbvalues['dbname']) . '`';
-        $sql = "CREATE DATABASE IF NOT EXISTS {$dbname} DEFAULT CHARACTER SET {$cs} COLLATE {$coll}";
-        if (!$conn->query($sql)) {
-            $err = $conn->error;
-            $conn->close();
-            return 'CREATE DATABASE failed: ' . $err;
-        }
-        $conn->close();
-        return null;
-    }
-
-    if ($dbtype === 'pgsql') {
-        if (!function_exists('pg_connect')) {
-            return 'pg_connect function is unavailable (pgsql extension not loaded)';
-        }
-
-        $host = (string) ($dbvalues['dbhost'] ?? '');
-        $user = (string) ($dbvalues['dbuser'] ?? '');
-        $pass = (string) ($dbvalues['dbpass'] ?? '');
-        $dbname = (string) ($dbvalues['dbname'] ?? '');
-        $dboptions = [];
-        if (!empty($dbvalues['dboptions']) && is_array($dbvalues['dboptions'])) {
-            $dboptions = $dbvalues['dboptions'];
-        }
-        $port = isset($dboptions['dbport']) ? (int) $dboptions['dbport'] : null;
-
-        $connparts = [];
-        if ($host !== '') {
-            $connparts[] = 'host=' . str_replace("'", "\\'", $host);
-        }
-        if ($port) {
-            $connparts[] = 'port=' . $port;
-        }
-        if ($user !== '') {
-            $connparts[] = 'user=' . str_replace("'", "\\'", $user);
-        }
-        $connparts[] = "dbname='postgres'";
-        if ($pass !== '') {
-            $connparts[] = "password='" . str_replace("'", "\\'", $pass) . "'";
-        }
-
-        $conn = @pg_connect(implode(' ', $connparts));
-        if (!$conn) {
-            return 'DB connect failed: could not connect to postgres maintenance database';
-        }
-
-        $existsres = @pg_query_params($conn, 'SELECT 1 FROM pg_database WHERE datname = $1', [$dbname]);
-        if (!$existsres) {
-            pg_close($conn);
-            return 'Failed checking pg_database for target DB';
-        }
-        if (pg_num_rows($existsres) > 0) {
-            pg_free_result($existsres);
-            pg_close($conn);
-            return null;
-        }
-        pg_free_result($existsres);
-
-        $createdb = '"' . str_replace('"', '""', $dbname) . '"';
-        if (!@pg_query($conn, 'CREATE DATABASE ' . $createdb)) {
-            $err = pg_last_error($conn);
-            pg_close($conn);
-            return 'CREATE DATABASE failed: ' . $err;
-        }
-        pg_close($conn);
-        return null;
-    }
-    return null;
-};
-
 $allowedshortcodesraw = (string) get_config('local_multitenancy', 'allowedshortcodes');
 $allowedshortcodes = [];
 if ($allowedshortcodesraw !== '') {
@@ -188,14 +98,29 @@ if ($allowedshortcodesraw !== '') {
     }
 }
 
+$editoroptions = [
+    'subdirs' => 0,
+    'maxbytes' => 0,
+    'maxfiles' => 0,
+    'context' => context_system::instance(),
+];
+
 $form = new \local_multitenancy\form\tenant_edit_form(null, [
     'existing' => $record,
     'allowedshortcodes' => $allowedshortcodes,
 ]);
 
 if ($record) {
-    $data = (array) $record;
-    $form->set_data($data);
+    $formdata = file_prepare_standard_editor(
+        $record,
+        'midurim',
+        $editoroptions,
+        context_system::instance(),
+        'local_multitenancy',
+        'tenant_midurim',
+        (int) $record->id
+    );
+    $form->set_data($formdata);
 }
 
 if ($form->is_cancelled()) {
@@ -204,8 +129,14 @@ if ($form->is_cancelled()) {
 
 if ($data = $form->get_data()) {
     $now = time();
+    $isnew = empty($data->id);
     $row = new stdClass();
-    $row->shortcode = trim($data->shortcode);
+    if ($isnew) {
+        $row->shortcode = trim($data->shortcode);
+    } else {
+        $existingrecord = $DB->get_record('local_multitenancy_tenant', ['id' => (int) $data->id], '*', MUST_EXIST);
+        $row->shortcode = (string) $existingrecord->shortcode;
+    }
     $generated = $buildtenantvalues($row->shortcode);
     $generateddb = $buildtenantdbvalues($row->shortcode);
     $row->name = trim($data->name);
@@ -219,47 +150,54 @@ if ($data = $form->get_data()) {
     $row->dbprefix = $generateddb['dbprefix'];
     $row->dbtype = $generateddb['dbtype'];
     $row->dblibrary = $generateddb['dblibrary'];
+    if (!empty($CFG->dboptions) && is_array($CFG->dboptions)) {
+        $row->dboptions = json_encode($CFG->dboptions, JSON_UNESCAPED_SLASHES);
+    }
     $row->enabled = !empty($data->enabled) ? 1 : 0;
+    $row->showonlogin = !empty($data->showonlogin) ? 1 : 0;
     $row->sortorder = (int) $data->sortorder;
 
-    if (!empty($data->id)) {
-        $row->id = $data->id;
-        $row->timemodified = $now;
-        $DB->update_record('local_multitenancy_tenant', $row);
-    } else {
+    if ($isnew) {
+        $row->midurim = '';
+        $row->midurimformat = FORMAT_HTML;
+        $row->provisionstatus = \local_multitenancy\tenant_provisioner::STATUS_PENDING;
+        $row->provisionerror = null;
         $row->timecreated = $now;
         $row->timemodified = $now;
-        $DB->insert_record('local_multitenancy_tenant', $row);
-    }
-
-    if (!is_dir($row->dataroot) && !make_writable_directory($row->dataroot, false)) {
-        \core\notification::warning(get_string('datarootautocreatefailed', 'local_multitenancy', $row->dataroot));
-    }
-    $schemaerr = $ensuretenantdbschema($generateddb);
-    if ($schemaerr !== null) {
-        \core\notification::warning(get_string('dbschemaautocreatefailed', 'local_multitenancy', $schemaerr));
+        $row->id = $DB->insert_record('local_multitenancy_tenant', $row);
     } else {
-        \core\notification::info(get_string('dbschemaautocreated', 'local_multitenancy', $generateddb['dbname']));
+        $row->id = (int) $data->id;
+        $row->timemodified = $now;
+        $DB->update_record('local_multitenancy_tenant', $row);
     }
 
-    if (!empty($data->initdbfromparent)) {
-        $tenant = $DB->get_record('local_multitenancy_tenant', ['shortcode' => $row->shortcode], '*', MUST_EXIST);
-        $copycourses = !empty($data->copycoursesdata);
-        $result = \local_multitenancy\database_provisioner::provision_if_empty($tenant, $copycourses);
-        if ($result['state'] === 'provisioned') {
-            $key = $copycourses ? 'dbprovisioned' : 'dbprovisionednocourses';
-            \core\notification::success(get_string($key, 'local_multitenancy', $tenant->dbname));
-        } else if ($result['state'] === 'skipped_notempty') {
-            \core\notification::info(get_string('dbprovisionskippednotempty', 'local_multitenancy', $tenant->dbname));
-        } else if ($result['state'] === 'skipped_unsupported') {
-            \core\notification::warning(get_string('dbprovisionskippedunsupported', 'local_multitenancy', $tenant->dbtype));
-        } else {
-            \core\notification::error(get_string('dbprovisionfailed', 'local_multitenancy', $result['detail']));
-        }
-    }
+    $data = file_postupdate_standard_editor(
+        $data,
+        'midurim',
+        $editoroptions,
+        context_system::instance(),
+        'local_multitenancy',
+        'tenant_midurim',
+        (int) $row->id
+    );
+
+    $midurimupdate = new stdClass();
+    $midurimupdate->id = (int) $row->id;
+    $midurimupdate->midurim = (string) ($data->midurim ?? '');
+    $midurimupdate->midurimformat = isset($data->midurimformat) ? (int) $data->midurimformat : FORMAT_HTML;
+    $midurimupdate->timemodified = time();
+    $DB->update_record('local_multitenancy_tenant', $midurimupdate);
 
     \local_multitenancy\gateway_manager::sync();
-    if (\local_multitenancy\registry_writer::sync()) {
+    $registrywritten = \local_multitenancy\registry_writer::sync();
+
+    $initdb = $isnew && !empty($data->initdbfromparent);
+    $copycourses = $isnew && !empty($data->copycoursesdata);
+
+    if ($isnew) {
+        \local_multitenancy\tenant_provisioner::queue((int) $row->id, $initdb, $copycourses);
+        \core\notification::success(get_string('tenantprovisionqueued', 'local_multitenancy', $row->shortcode));
+    } else if ($registrywritten) {
         \core\notification::success(get_string('registryupdated', 'local_multitenancy'));
     } else {
         \core\notification::warning(get_string('registrynotwritten', 'local_multitenancy'));
