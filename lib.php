@@ -558,7 +558,10 @@ function local_multitenancy_login_tenant_picker_html(): string {
     $placeholder = local_multitenancy_string_or_default('logintenantpicker_placeholder', 'Select a site…');
     $heading = local_multitenancy_string_or_default('logintenantpicker_label', 'Sign in to your site');
 
-    $urlselect = new \core\output\url_select(
+    if (!class_exists(\url_select::class, false)) {
+        require_once($GLOBALS['CFG']->dirroot . '/lib/classes/output/url_select.php');
+    }
+    $urlselect = new \url_select(
         $urls,
         '',
         ['' => $placeholder],
