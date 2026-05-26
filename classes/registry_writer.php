@@ -66,6 +66,7 @@ class registry_writer {
             }
             $wwwroot = \local_multitenancy_normalize_public_wwwroot((string) $r->wwwroot);
             $map[$host] = [
+                'id' => (int) $r->id,
                 'shortcode' => $r->shortcode,
                 'name' => $r->name,
                 'enabled' => (int) $r->enabled,

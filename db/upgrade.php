@@ -115,5 +115,22 @@ function xmldb_local_multitenancy_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026041511, 'local', 'multitenancy');
     }
 
+    if ($oldversion < 2026041512) {
+        get_string_manager()->reset_caches();
+        upgrade_plugin_savepoint(true, 2026041512, 'local', 'multitenancy');
+    }
+
+    if ($oldversion < 2026041513) {
+        upgrade_plugin_savepoint(true, 2026041513, 'local', 'multitenancy');
+    }
+
+    if ($oldversion < 2026041514) {
+        upgrade_plugin_savepoint(true, 2026041514, 'local', 'multitenancy');
+    }
+
+    if ($oldversion < 2026041515) {
+        upgrade_plugin_savepoint(true, 2026041515, 'local', 'multitenancy');
+    }
+
     return true;
 }

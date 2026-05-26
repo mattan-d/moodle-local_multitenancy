@@ -38,6 +38,7 @@ class hook_callbacks {
      */
     public static function before_standard_head_html_generation(before_standard_head_html_generation $hook): void {
         \local_multitenancy_midurim_banner_register_assets();
+        \local_multitenancy_login_register_assets();
     }
 
     /**
@@ -46,7 +47,7 @@ class hook_callbacks {
      */
     public static function before_standard_top_of_body_html_generation(before_standard_top_of_body_html_generation $hook): void {
         $hook->add_html(\local_multitenancy_midurim_banner_html());
-        $hook->add_html(\local_multitenancy_login_tenant_picker_html());
+        $hook->add_html(\local_multitenancy_login_page_html());
     }
 
     /**

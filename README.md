@@ -10,7 +10,7 @@
 
 - **Moodle:** לפחות גרסת ליבה התואמת ל־`$plugin->requires` ב־`version.php` (נכון לכתיבה זו: Moodle 4.1 ומעלה).
 - **מסד נתונים:** יצירת סכימה אוטומטית והעתקת DB מהאב נתמכים למשפחת **MySQL/MariaDB** (`mysqli`, `mariadb`, `auroramysql`) ול־**PostgreSQL** (`pgsql`) — כולל `pg_dump`/`psql` ב-CLI וגם fallback ב-PHP כשאין כלי שורת פקודה (יצירת סכימה מ-`information_schema` והעתקת נתונים). פורט/socket של PostgreSQL נלקחים מ-`$CFG->dboptions` (נשמרים גם לדייר בעת יצירה).
-- **Hooks:** התוסף משתמש ב־hook של ליבת Moodle להצגת הקשר דייר בפוטר (`before_standard_footer_html_generation`).
+- **Hooks:** התוסף משתמש ב־hooks של ליבת Moodle (בין השאר `before_standard_top_of_body_html_generation` לעמוד התחברות ומידורים).
 
 ---
 
@@ -108,9 +108,10 @@ local_multitenancy_bootstrap($CFG);
 - `/local/multitenancy/leave.php` — מנקה עוגיות ומחזיר לדף הבית של האתר.
 - בהתנתקות (`login/logout.php`) עוגיות הדייר מתנקות אוטומטית.
 
-בפוטר מוצג (כשיש הקשר דייר) טקסט כמו "הקשר דייר פעיל" עם קישור ליציאה.
+בעמוד ההתחברות הראשי (`/login/index.php`), בתוך `login-container` (מעל טופס ההתחברות):
 
-בעמוד ההתחברות הראשי (`/login/index.php`) התוסף מציג רשימת דיירים **מופעלים** שסומנו **"הצג בדף התחברות"**, לפי סדר המיון (`sortorder`). לחיצה על דייר מעבירה לכתובת ה־gateway שלו כדי להיכנס בהקשר הדייר.
+1. **רשימה נפתחת (dropdown)** של דיירים **מופעלים** עם **"הצג בדף התחברות"**, לפי `sortorder` — בחירה מעבירה ל־gateway.
+2. **כרטיס דייר נוכחי** (כשיש עוגיית דייר פעילה) — שם, מזהה/קוד, וקישור «יציאה מהדייר», מתחת ל־dropdown.
 
 ---
 

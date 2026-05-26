@@ -1,0 +1,25 @@
+/* Login page: tenant dropdown + current-tenant card inside .login-container. */
+.local-multitenancy-login-extras {
+    width: 100%;
+    margin-bottom: 0.25rem;
+}
+
+.local-multitenancy-login-extras .local-multitenancy-login-picker {
+    margin-bottom: 1rem;
+}
+
+.local-multitenancy-login-extras .local-multitenancy-footer-context {
+    margin-bottom: 1rem;
+}
+
+/* Align core url_select with Boost login box (theme/boost/scss/moodle/login.scss). */
+.local-multitenancy-login-picker .local-multitenancy-urlselect form {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+}
+
+.local-multitenancy-login-picker .local-multitenancy-urlselect .custom-select {
+    width: 100%;
+    max-width: none;
+}

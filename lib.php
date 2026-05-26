@@ -33,10 +33,14 @@ defined('MOODLE_INTERNAL') || die();
  */
 function local_multitenancy_string_or_default(string $identifier, string $fallback): string {
     $manager = get_string_manager();
-    if ($manager->string_exists($identifier, 'local_multitenancy')) {
-        return get_string($identifier, 'local_multitenancy');
+    if (!$manager->string_exists($identifier, 'local_multitenancy')) {
+        return $fallback;
     }
-    return $fallback;
+    $value = get_string($identifier, 'local_multitenancy');
+    if ($value === "[[$identifier]]") {
+        return $fallback;
+    }
+    return $value;
 }
 
 /**
@@ -235,89 +239,269 @@ function local_multitenancy_midurim_banner_html(): string {
 }
 
 /**
- * Build current tenant indicator and leave link HTML.
+ * Resolve tenant display fields for the footer context card.
  *
- * @return string
+ * @param string $shortcode
+ * @return array{name:string,shortcode:string,id:int}|null
  */
-function local_multitenancy_footer_context_html_once(): string {
-    static $alreadyrendered = false;
-    if ($alreadyrendered) {
-     //   return '';
-    }
-    if (empty($_COOKIE['local_mt_sc'])) {
-        return '';
-    }
-    $code = (string) $_COOKIE['local_mt_sc'];
-    if (!preg_match('/^[a-zA-Z0-9_-]+$/', $code)) {
-        return '';
+function local_multitenancy_tenant_display_by_shortcode(string $shortcode): ?array {
+    if ($shortcode === '') {
+        return null;
     }
 
-    $tenantname = $code;
-    if (defined('MULTITENANCY_REGISTRY_DIR') && MULTITENANCY_REGISTRY_DIR) {
-        $registryfile = rtrim((string) MULTITENANCY_REGISTRY_DIR, '/\\') . '/registry.php';
-        if (is_readable($registryfile)) {
-            $map = include $registryfile;
-            if (is_array($map)) {
-                foreach ($map as $row) {
-                    if (is_array($row) && !empty($row['shortcode']) && (string) $row['shortcode'] === $code) {
-                        if (!empty($row['name'])) {
-                            $tenantname = (string) $row['name'];
-                        }
-                        break;
-                    }
-                }
-            }
+    $row = local_multitenancy_registry_tenant_by_shortcode($shortcode);
+    if ($row !== null) {
+        $name = trim((string) ($row['name'] ?? ''));
+        return [
+            'name' => $name !== '' ? $name : $shortcode,
+            'shortcode' => $shortcode,
+            'id' => !empty($row['id']) ? (int) $row['id'] : 0,
+        ];
+    }
+
+    global $DB;
+    if ($DB->get_manager()->table_exists('local_multitenancy_tenant')) {
+        $record = $DB->get_record('local_multitenancy_tenant', ['shortcode' => $shortcode], 'id,shortcode,name', IGNORE_MISSING);
+        if ($record) {
+            $name = trim((string) ($record->name ?? ''));
+            return [
+                'name' => $name !== '' ? $name : $shortcode,
+                'shortcode' => $shortcode,
+                'id' => (int) $record->id,
+            ];
         }
     }
 
-    $context = get_string('footertenantcontext', 'local_multitenancy', (object) [
-        'name' => $tenantname,
-        'code' => $code,
-    ]);
-    $leaveurl = new moodle_url('/local/multitenancy/leave.php');
-    $leavelink = html_writer::link($leaveurl, get_string('footerleavetenant', 'local_multitenancy'));
+    return [
+        'name' => $shortcode,
+        'shortcode' => $shortcode,
+        'id' => 0,
+    ];
+}
 
-    $alreadyrendered = true;
-    return html_writer::div(
-        html_writer::tag('span', s($context)) . ' ' . $leavelink,
-        'local-multitenancy-footer-context',
-        ['style' => 'margin-top:8px;font-size:.9rem;']
+/**
+ * Active tenant shortcode for footer display (cookie or gateway entry).
+ *
+ * @return string
+ */
+function local_multitenancy_footer_tenant_shortcode(): string {
+    return local_multitenancy_active_tenant_shortcode();
+}
+
+/**
+ * Register CSS/JS for login page tenant UI (picker + current tenant card).
+ *
+ * @return void
+ */
+function local_multitenancy_login_register_assets(): void {
+    static $registered = false;
+    if ($registered || !local_multitenancy_path_is_login_page()) {
+        return;
+    }
+    $registered = true;
+
+    global $PAGE;
+    $PAGE->requires->css('/local/multitenancy/styles/login_picker.css');
+    $PAGE->requires->css('/local/multitenancy/styles/footer_context.css');
+    $PAGE->requires->js_amd_inline(<<<'JS'
+(function() {
+    function placeLoginTenantExtras() {
+        var extras = document.querySelector('.local-multitenancy-login-extras');
+        var logincontainer = document.querySelector('.login-container');
+        if (!extras || !logincontainer || extras.getAttribute('data-local-multitenancy-placed') === '1') {
+            return;
+        }
+        logincontainer.insertBefore(extras, logincontainer.firstChild);
+        extras.setAttribute('data-local-multitenancy-placed', '1');
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', placeLoginTenantExtras);
+    } else {
+        placeLoginTenantExtras();
+    }
+})();
+JS
     );
 }
 
 /**
- * Add current tenant indicator and leave link to standard footer HTML.
+ * @deprecated Use local_multitenancy_login_register_assets().
+ * @return void
+ */
+function local_multitenancy_footer_context_register_assets(): void {
+    local_multitenancy_login_register_assets();
+}
+
+/**
+ * @deprecated Use local_multitenancy_login_register_assets().
+ * @return void
+ */
+function local_multitenancy_login_tenant_picker_register_assets(): void {
+    local_multitenancy_login_register_assets();
+}
+
+/**
+ * Build current-tenant card HTML (shared markup).
+ *
+ * @return string
+ */
+function local_multitenancy_tenant_context_card_html(): string {
+    static $cached = null;
+    if ($cached !== null) {
+        return $cached;
+    }
+
+    $code = local_multitenancy_footer_tenant_shortcode();
+    if ($code === '') {
+        $cached = '';
+        return $cached;
+    }
+
+    $tenant = local_multitenancy_tenant_display_by_shortcode($code);
+    if ($tenant === null) {
+        $cached = '';
+        return $cached;
+    }
+
+    global $OUTPUT;
+
+    $titlelabel = local_multitenancy_string_or_default('footertenantcurrent', 'Current tenant:');
+    $regionlabel = local_multitenancy_string_or_default('footertenantregion', 'Active tenant context');
+    if (!empty($tenant['id'])) {
+        $meta = get_string('footertenantmeta', 'local_multitenancy', (object) [
+            'id' => $tenant['id'],
+            'code' => $tenant['shortcode'],
+        ]);
+        if ($meta === '[[footertenantmeta]]') {
+            $meta = 'Tenant ID: ' . $tenant['id'] . ' · ' . $tenant['shortcode'];
+        }
+    } else {
+        $meta = get_string('footertenantmeta_code', 'local_multitenancy', $tenant['shortcode']);
+        if ($meta === '[[footertenantmeta_code]]') {
+            $meta = 'Tenant code: ' . $tenant['shortcode'];
+        }
+    }
+
+    $badgeicon = html_writer::empty_tag('img', [
+        'src' => $OUTPUT->image_url('i/cohort', 'core'),
+        'class' => 'icon',
+        'alt' => '',
+        'aria-hidden' => 'true',
+    ]);
+    $leaveicon = html_writer::empty_tag('img', [
+        'src' => $OUTPUT->image_url('logout', 'core'),
+        'class' => 'icon',
+        'alt' => '',
+        'aria-hidden' => 'true',
+    ]);
+    $leaveurl = new moodle_url('/local/multitenancy/leave.php');
+    $leavelabel = local_multitenancy_string_or_default('footerleavetenant', 'Leave tenant');
+    $leavelink = html_writer::link(
+        $leaveurl,
+        $leaveicon . html_writer::span(s($leavelabel)),
+        ['class' => 'local-multitenancy-footer-context__leave']
+    );
+
+    $info = html_writer::div($badgeicon, 'local-multitenancy-footer-context__badge') .
+        html_writer::div(
+            html_writer::tag(
+                'p',
+                s($titlelabel) . ' ' . html_writer::span(s($tenant['name']), 'local-multitenancy-footer-context__name'),
+                ['class' => 'local-multitenancy-footer-context__title']
+            ) .
+            html_writer::tag('p', s($meta), ['class' => 'local-multitenancy-footer-context__meta']),
+            'local-multitenancy-footer-context__text'
+        );
+
+    $card = html_writer::div(
+        html_writer::div($info, 'local-multitenancy-footer-context__info') .
+        html_writer::div($leavelink, 'local-multitenancy-footer-context__action'),
+        'local-multitenancy-footer-context__card'
+    );
+
+    $cached = html_writer::div($card, 'local-multitenancy-footer-context', [
+        'role' => 'region',
+        'aria-label' => $regionlabel,
+    ]);
+    return $cached;
+}
+
+/**
+ * Current-tenant card on the login page only (below the tenant dropdown).
+ *
+ * @return string
+ */
+function local_multitenancy_login_tenant_context_html_once(): string {
+    if (!local_multitenancy_path_is_login_page()) {
+        return '';
+    }
+    return local_multitenancy_tenant_context_card_html();
+}
+
+/**
+ * @deprecated Use local_multitenancy_login_tenant_context_html_once().
+ * @return string
+ */
+function local_multitenancy_footer_context_html_once(): string {
+    return local_multitenancy_login_tenant_context_html_once();
+}
+
+/**
+ * Tenant picker and current-tenant card for login/index.php.
+ *
+ * @return string
+ */
+function local_multitenancy_login_page_html(): string {
+    static $cached = null;
+    if ($cached !== null) {
+        return $cached;
+    }
+
+    if (!local_multitenancy_path_is_login_page()) {
+        $cached = '';
+        return $cached;
+    }
+
+    $picker = local_multitenancy_login_tenant_picker_html();
+    $context = local_multitenancy_login_tenant_context_html_once();
+    if ($picker === '' && $context === '') {
+        $cached = '';
+        return $cached;
+    }
+
+    $html = $picker . $context;
+    if ($html !== '') {
+        $html .= html_writer::div('', 'login-divider');
+    }
+
+    $cached = html_writer::div($html, 'local-multitenancy-login-extras w-100');
+    return $cached;
+}
+
+/**
+ * Legacy standard_footer_html callback (login UI is injected via top-of-body hook).
  *
  * @return string
  */
 function local_multitenancy_standard_footer_html(): string {
-    $html = local_multitenancy_footer_context_html_once();
-    $html .= local_multitenancy_login_tenant_picker_html();
-    return $html;
+    return '';
 }
 
 /**
- * Legacy fallback for themes/flows that skip standard_footer_html hook.
+ * Legacy before_footer callback (login UI uses top-of-body hook only).
  *
  * @return void
  */
 function local_multitenancy_before_footer(): void {
-    echo local_multitenancy_footer_context_html_once();
-    echo local_multitenancy_login_tenant_picker_html();
 }
 
 /**
- * Render tenant picker on login page.
+ * Whether the current page is the main login screen.
  *
- * @return string
+ * @return bool
  */
-function local_multitenancy_login_tenant_picker_html(): string {
-    global $PAGE, $DB;
-    static $alreadyrendered = false;
-
-    if ($alreadyrendered) {
-        return '';
-    }
+function local_multitenancy_path_is_login_page(): bool {
+    global $PAGE;
 
     $path = '';
     if (!empty($PAGE->url)) {
@@ -326,7 +510,19 @@ function local_multitenancy_login_tenant_picker_html(): string {
     if ($path === '' && !empty($_SERVER['SCRIPT_NAME'])) {
         $path = (string) $_SERVER['SCRIPT_NAME'];
     }
-    if (!preg_match('#/login/index\.php$#', $path)) {
+    return (bool) preg_match('#/login/index\.php$#', $path);
+}
+
+/**
+ * Render tenant picker on login page.
+ *
+ * @return string
+ */
+function local_multitenancy_login_tenant_picker_html(): string {
+    global $DB, $OUTPUT;
+    static $alreadyrendered = false;
+
+    if ($alreadyrendered || !local_multitenancy_path_is_login_page()) {
         return '';
     }
 
@@ -341,7 +537,7 @@ function local_multitenancy_login_tenant_picker_html(): string {
         return '';
     }
 
-    $items = [];
+    $urls = [];
     foreach ($records as $tenant) {
         $shortcode = trim((string) $tenant->shortcode);
         if ($shortcode === '') {
@@ -351,30 +547,31 @@ function local_multitenancy_login_tenant_picker_html(): string {
         if ($name === '') {
             $name = $shortcode;
         }
-        $label = format_string($name) . ' (' . s($shortcode) . ')';
         $url = new moodle_url('/local/multitenancy/users/' . rawurlencode($shortcode) . '/');
-        $items[] = html_writer::tag('li', html_writer::link($url, $label), ['style' => 'margin: 0.25rem 0;']);
+        $urls[$url->out(false)] = format_string($name);
     }
 
-    if (!$items) {
+    if ($urls === []) {
         return '';
     }
 
-    $title = local_multitenancy_string_or_default('logintenantpicker_title', 'Tenant selection');
-    $desc = local_multitenancy_string_or_default('logintenantpicker_desc', 'Choose a tenant to continue.');
-    $list = html_writer::tag('ul', implode('', $items), ['style' => 'margin: 0.5rem 0 0 1.25rem;']);
-    $content = html_writer::tag('strong', s($title)) .
-        html_writer::div(s($desc), '') .
-        $list;
+    $placeholder = local_multitenancy_string_or_default('logintenantpicker_placeholder', 'Select a site…');
+    $heading = local_multitenancy_string_or_default('logintenantpicker_label', 'Sign in to your site');
+
+    $urlselect = new \core\output\url_select(
+        $urls,
+        '',
+        ['' => $placeholder],
+        'local_multitenancy_tenant_jump'
+    );
+    $urlselect->class = 'local-multitenancy-urlselect w-100';
+    $urlselect->attributes['id'] = 'local-multitenancy-tenant-select';
+
+    $content = html_writer::tag('h2', $heading, ['class' => 'login-heading']) .
+        $OUTPUT->render($urlselect);
 
     $alreadyrendered = true;
-    return html_writer::div(
-        $content,
-        'local-multitenancy-login-picker',
-        [
-            'style' => 'margin-top:12px;padding:12px;border:1px solid #d0d7de;border-radius:6px;background:#f8f9fa;',
-        ]
-    );
+    return html_writer::div($content, 'local-multitenancy-login-picker w-100');
 }
 
 /**
@@ -384,6 +581,7 @@ function local_multitenancy_login_tenant_picker_html(): string {
  */
 function local_multitenancy_before_standard_html_head() {
     local_multitenancy_midurim_banner_register_assets();
+    local_multitenancy_login_register_assets();
     return '';
 }
 
@@ -393,5 +591,9 @@ function local_multitenancy_before_standard_html_head() {
  * @return string
  */
 function local_multitenancy_before_standard_top_of_body_html() {
-    return local_multitenancy_midurim_banner_html() . local_multitenancy_login_tenant_picker_html();
+    $html = local_multitenancy_midurim_banner_html();
+    if (!class_exists(\core\hook\output\before_standard_top_of_body_html_generation::class)) {
+        $html .= local_multitenancy_login_page_html();
+    }
+    return $html;
 }
