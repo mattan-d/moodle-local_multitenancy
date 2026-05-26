@@ -160,6 +160,7 @@ $table->head = [
     get_string('columnlastlogin', 'local_multitenancy'),
     get_string('columnsiteadmin', 'local_multitenancy'),
     get_string('suspended', 'moodle'),
+    get_string('columnactions', 'local_multitenancy'),
 ];
 $table->attributes['class'] = 'generaltable';
 $table->data = [];
@@ -178,6 +179,25 @@ foreach ($pagedusers as $user) {
         'firstname' => (string) $user->firstname,
         'lastname' => (string) $user->lastname,
     ]);
+    $transferurl = new moodle_url('/local/multitenancy/user_transfer.php', [
+        'sourcetenantid' => (int) $user->tenantid,
+        'userid' => (int) $user->userid,
+        'tenantid' => $tenantid,
+        'search' => $search,
+        'includesuspended' => $includesuspended,
+        'perpage' => $perpage,
+        'page' => $page,
+    ]);
+    $actions = $OUTPUT->action_icon(
+        $transferurl,
+        new pix_icon('i/settings', get_string('usertransfer_action', 'local_multitenancy'))
+    );
+    if (!empty($user->siteadmin)) {
+        $actions = html_writer::span(
+            get_string('usertransfer_siteadmin_na', 'local_multitenancy'),
+            'text-muted'
+        );
+    }
     $table->data[] = [
         html_writer::link($gateway, $tenantlabel, ['target' => '_blank']),
         $cell($user->username),
@@ -187,6 +207,7 @@ foreach ($pagedusers as $user) {
         $user->lastlogin ? userdate($user->lastlogin) : get_string('never', 'moodle'),
         $user->siteadmin ? get_string('yes', 'moodle') : get_string('no', 'moodle'),
         $user->suspended ? get_string('yes', 'moodle') : get_string('no', 'moodle'),
+        $actions,
     ];
 }
 
