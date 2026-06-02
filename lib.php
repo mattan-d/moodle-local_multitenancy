@@ -49,8 +49,9 @@ function local_multitenancy_string_or_default(string $identifier, string $fallba
  * @return string Empty when not in a tenant context.
  */
 function local_multitenancy_active_tenant_shortcode(): string {
-    if (!empty($_COOKIE['local_mt_sc'])) {
-        $code = (string) $_COOKIE['local_mt_sc'];
+    $cookiename = \local_multitenancy\gateway_manager::COOKIE_NAME;
+    if (!empty($_COOKIE[$cookiename])) {
+        $code = (string) $_COOKIE[$cookiename];
         if (preg_match('/^[a-zA-Z0-9_-]+$/', $code)) {
             return $code;
         }
@@ -62,6 +63,34 @@ function local_multitenancy_active_tenant_shortcode(): string {
         }
     }
     return '';
+}
+
+/**
+ * Whether the current request runs in a tenant Moodle context (not the parent hub).
+ *
+ * @return bool
+ */
+function local_multitenancy_is_tenant_context(): bool {
+    global $CFG;
+
+    if (local_multitenancy_active_tenant_shortcode() !== '') {
+        return true;
+    }
+
+    if (!empty($CFG->sessioncookie) && strpos((string) $CFG->sessioncookie, 'MT_') === 0) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Whether the current request uses the parent (hub) site configuration.
+ *
+ * @return bool
+ */
+function local_multitenancy_is_parent_site(): bool {
+    return !local_multitenancy_is_tenant_context();
 }
 
 /**
@@ -523,6 +552,10 @@ function local_multitenancy_login_tenant_picker_html(): string {
     static $alreadyrendered = false;
 
     if ($alreadyrendered || !local_multitenancy_path_is_login_page()) {
+        return '';
+    }
+
+    if (!local_multitenancy_is_parent_site()) {
         return '';
     }
 

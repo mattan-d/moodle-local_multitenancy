@@ -281,6 +281,99 @@ class tenant_user_transfer {
     }
 
     /**
+     * Insert a new user into a tenant database (fails if username or email already exists).
+     *
+     * @param \stdClass $tenant
+     * @param \stdClass $user User row fields (password hash required for manual auth).
+     * @return array{ok:bool, message:string}
+     */
+    public static function insert_new_user(\stdClass $tenant, \stdClass $user): array {
+        $username = trim((string) ($user->username ?? ''));
+        $mnethostid = (int) ($user->mnethostid ?? 1);
+        if ($username === '') {
+            return ['ok' => false, 'message' => get_string('usercreate_invalid_username', 'local_multitenancy')];
+        }
+        if (self::username_exists($tenant, $username, $mnethostid)) {
+            return ['ok' => false, 'message' => get_string('usercreate_username_exists', 'local_multitenancy', $username)];
+        }
+
+        $emailconflict = self::email_conflict($tenant, (string) ($user->email ?? ''), $username);
+        if ($emailconflict !== null) {
+            return ['ok' => false, 'message' => get_string('usercreate_email_conflict', 'local_multitenancy', $emailconflict)];
+        }
+
+        return self::upsert_user($tenant, $user);
+    }
+
+    /**
+     * @param \stdClass $tenant
+     * @param string $username
+     * @param int $mnethostid
+     * @return bool
+     */
+    public static function username_exists(\stdClass $tenant, string $username, int $mnethostid = 1): bool {
+        $dbtype = (string) ($tenant->dbtype ?? '');
+        if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
+            return self::username_exists_pg($tenant, $username, $mnethostid);
+        }
+        return self::username_exists_mysql($tenant, $username, $mnethostid);
+    }
+
+    /**
+     * @param \stdClass $tenant
+     * @param string $username
+     * @param int $mnethostid
+     * @return bool
+     */
+    private static function username_exists_mysql(\stdClass $tenant, string $username, int $mnethostid): bool {
+        $conn = self::connect_mysql($tenant);
+        if (!$conn) {
+            return false;
+        }
+        $prefix = (string) ($tenant->dbprefix ?? 'mdl_');
+        $usertable = '`' . str_replace('`', '``', $prefix . 'user') . '`';
+        $stmt = $conn->prepare("SELECT id FROM {$usertable} WHERE username = ? AND mnethostid = ? AND deleted = 0 LIMIT 1");
+        if (!$stmt) {
+            $conn->close();
+            return false;
+        }
+        $stmt->bind_param('si', $username, $mnethostid);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $exists = $res && $res->fetch_assoc();
+        $stmt->close();
+        $conn->close();
+        return (bool) $exists;
+    }
+
+    /**
+     * @param \stdClass $tenant
+     * @param string $username
+     * @param int $mnethostid
+     * @return bool
+     */
+    private static function username_exists_pg(\stdClass $tenant, string $username, int $mnethostid): bool {
+        $dbname = (string) ($tenant->dbname ?? '');
+        $conn = postgres_helper::connect_tenant($tenant, $dbname);
+        if (!$conn) {
+            return false;
+        }
+        $prefix = (string) ($tenant->dbprefix ?? 'mdl_');
+        $usertable = postgres_helper::quote_ident($prefix . 'user');
+        $res = @pg_query_params(
+            $conn,
+            "SELECT id FROM {$usertable} WHERE username = $1 AND mnethostid = $2 AND deleted = 0 LIMIT 1",
+            [$username, $mnethostid]
+        );
+        $exists = $res && pg_fetch_assoc($res);
+        if ($res) {
+            pg_free_result($res);
+        }
+        pg_close($conn);
+        return (bool) $exists;
+    }
+
+    /**
      * @param \stdClass $tenant
      * @param string $email
      * @param string $username

@@ -125,11 +125,22 @@ $filterform->set_data((object) [
     'page' => 0,
 ]);
 
+$createurlparams = [
+    'tenantid' => $tenantid,
+    'search' => $search,
+    'includesuspended' => $includesuspended,
+    'perpage' => $perpage,
+];
+$createurl = new moodle_url('/local/multitenancy/user_create.php', $createurlparams);
+
 echo $OUTPUT->header();
 echo $OUTPUT->heading(get_string('manageusers', 'local_multitenancy'));
 echo html_writer::tag('p', get_string('manageusers_desc', 'local_multitenancy'), ['class' => 'mb-3']);
 $backurl = new moodle_url('/local/multitenancy/manage.php');
+echo html_writer::start_div('mb-3');
 echo $OUTPUT->single_button($backurl, get_string('backtotenants', 'local_multitenancy'), 'get');
+echo $OUTPUT->single_button($createurl, get_string('usercreate_add', 'local_multitenancy'), 'get');
+echo html_writer::end_div();
 $filterform->display();
 
 if ($total === 0) {
