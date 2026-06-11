@@ -93,7 +93,7 @@ class tenant_edit_form extends \moodleform {
             $mform->setDefault('initdbfromparent', 1);
             $mform->addElement('advcheckbox', 'copycoursesdata', get_string('copycoursesdata', 'local_multitenancy'));
             $mform->addHelpButton('copycoursesdata', 'copycoursesdata', 'local_multitenancy');
-            $mform->setDefault('copycoursesdata', 1);
+            $mform->setDefault('copycoursesdata', 0);
         }
 
         $this->add_action_buttons();
