@@ -31,15 +31,10 @@ admin_externalpage_setup('local_multitenancy_manage');
 
 require_capability('local/multitenancy:manage', context_system::instance());
 
-if (optional_param('rebuild', 0, PARAM_INT) && confirm_sesskey()) {
-    \local_multitenancy\gateway_manager::sync();
-    if (\local_multitenancy\registry_writer::sync()) {
-        \core\notification::success(get_string('registryupdated', 'local_multitenancy'));
-    } else {
-        \core\notification::warning(get_string('registrynotwritten', 'local_multitenancy'));
-    }
-    redirect(new moodle_url('/local/multitenancy/manage.php'));
-}
+// Keep gateway folders + registry in sync automatically (no manual rebuild).
+\local_multitenancy\gateway_manager::sync();
+$registrydir = \local_multitenancy\registry_writer::ensure_registry_dir();
+$registryok = $registrydir !== '' && \local_multitenancy\registry_writer::sync();
 
 $PAGE->set_url(new moodle_url('/local/multitenancy/manage.php'));
 $PAGE->set_title(get_string('manage_tenants', 'local_multitenancy'));
@@ -48,12 +43,15 @@ $PAGE->set_heading(get_string('manage_tenants', 'local_multitenancy'));
 echo $OUTPUT->header();
 echo $OUTPUT->heading(get_string('manage_tenants', 'local_multitenancy'));
 
-$registrydir = get_config('local_multitenancy', 'registrydir');
-if (empty($registrydir)) {
-    echo $OUTPUT->notification(get_string('registrydirmissing', 'local_multitenancy'), 'warning');
-} else {
-    echo $OUTPUT->notification(get_string('registrydirset', 'local_multitenancy', $registrydir), 'info');
+if (!$registryok) {
+    echo $OUTPUT->notification(get_string('registrydirmissing', 'local_multitenancy'), 'error');
 }
+
+$leaveurl = new moodle_url('/local/multitenancy/leave.php');
+echo $OUTPUT->notification(
+    get_string('manage_recovery_hint', 'local_multitenancy', $leaveurl->out(false)),
+    'info'
+);
 
 $addurl = new moodle_url('/local/multitenancy/edit.php');
 echo $OUTPUT->single_button($addurl, get_string('addtenant', 'local_multitenancy'), 'get');
@@ -61,11 +59,7 @@ $allowedlisturl = new moodle_url('/local/multitenancy/allowed_shortcodes.php');
 echo $OUTPUT->single_button($allowedlisturl, get_string('manageallowedshortcodes', 'local_multitenancy'), 'get');
 $usersurl = new moodle_url('/local/multitenancy/users_manage.php');
 echo $OUTPUT->single_button($usersurl, get_string('manageusers', 'local_multitenancy'), 'get');
-
-if (!empty($registrydir)) {
-    $rebuildurl = new moodle_url('/local/multitenancy/manage.php', ['rebuild' => 1]);
-    echo $OUTPUT->single_button($rebuildurl, get_string('rebuildregistry', 'local_multitenancy'), 'post');
-}
+echo $OUTPUT->single_button($leaveurl, get_string('footerleavetenant', 'local_multitenancy'), 'get');
 
 $tenants = $DB->get_records('local_multitenancy_tenant', null, 'sortorder ASC, id ASC');
 
@@ -73,6 +67,32 @@ if (!$tenants) {
     echo $OUTPUT->notification(get_string('notenants', 'local_multitenancy'), 'notifymessage');
     echo $OUTPUT->footer();
     exit;
+}
+
+$failed = [];
+$pending = [];
+foreach ($tenants as $t) {
+    $status = (string) ($t->provisionstatus ?? '');
+    if ($status === \local_multitenancy\tenant_provisioner::STATUS_FAILED) {
+        $failed[] = $t;
+    } else if (in_array($status, [
+        \local_multitenancy\tenant_provisioner::STATUS_PENDING,
+        \local_multitenancy\tenant_provisioner::STATUS_PROCESSING,
+    ], true)) {
+        $pending[] = $t;
+    }
+}
+
+foreach ($failed as $t) {
+    $msg = get_string('manage_provision_failed', 'local_multitenancy', (object) [
+        'name' => format_string($t->name),
+        'code' => $t->shortcode,
+        'error' => (string) ($t->provisionerror ?? ''),
+    ]);
+    echo $OUTPUT->notification($msg, 'error');
+}
+if ($pending) {
+    echo $OUTPUT->notification(get_string('manage_provision_pending', 'local_multitenancy', count($pending)), 'warning');
 }
 
 $table = new html_table();
@@ -96,6 +116,8 @@ foreach ($tenants as $t) {
     $actions = $OUTPUT->action_icon($edit, new pix_icon('t/edit', get_string('edit'))) .
         $OUTPUT->action_icon($delete, new pix_icon('t/delete', get_string('delete')));
     $gateway = new moodle_url('/local/multitenancy/users/' . rawurlencode($t->shortcode) . '/');
+    $ready = ((string) ($t->provisionstatus ?? '') === \local_multitenancy\tenant_provisioner::STATUS_COMPLETE)
+        && !empty($t->enabled);
     $provisionlabel = \local_multitenancy\tenant_provisioner::status_label($t);
     if (!empty($t->provisionerror)) {
         $provisionlabel .= ' ' . html_writer::tag(
@@ -104,12 +126,23 @@ foreach ($tenants as $t) {
             ['class' => 'text-danger', 'title' => s($t->provisionerror)]
         );
     }
+    if ($ready) {
+        $gatewaycell = html_writer::link($gateway, s($gateway->out(false)), ['target' => '_blank']);
+        $wwwrootcell = html_writer::link($t->wwwroot, s($t->wwwroot), ['target' => '_blank']);
+    } else {
+        $gatewaycell = html_writer::span(
+            get_string('gateway_not_ready', 'local_multitenancy'),
+            'text-muted',
+            ['title' => s($gateway->out(false))]
+        );
+        $wwwrootcell = html_writer::span(s($t->wwwroot), 'text-muted');
+    }
     $table->data[] = [
         s($t->shortcode),
         format_string($t->name),
-        html_writer::link($gateway, s($gateway->out(false)), ['target' => '_blank']),
+        $gatewaycell,
         s($t->host),
-        html_writer::link($t->wwwroot, s($t->wwwroot), ['target' => '_blank']),
+        $wwwrootcell,
         s($t->dbname),
         $t->enabled ? get_string('yes') : get_string('no'),
         $provisionlabel,

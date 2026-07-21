@@ -140,5 +140,29 @@ function xmldb_local_multitenancy_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026041517, 'local', 'multitenancy');
     }
 
+    if ($oldversion < 2026041518) {
+        // Refresh registry with provisionstatus + rewrite gateway stubs; break incomplete-tenant loops.
+        \local_multitenancy\gateway_manager::sync();
+        \local_multitenancy\registry_writer::sync();
+        upgrade_plugin_savepoint(true, 2026041518, 'local', 'multitenancy');
+    }
+
+    if ($oldversion < 2026041519) {
+        // Registry path is automatic ({dataroot}/multitenancy); drop obsolete admin setting.
+        unset_config('registrydir', 'local_multitenancy');
+        \local_multitenancy\registry_writer::sync();
+        upgrade_plugin_savepoint(true, 2026041519, 'local', 'multitenancy');
+    }
+
+    if ($oldversion < 2026041520) {
+        upgrade_plugin_savepoint(true, 2026041520, 'local', 'multitenancy');
+    }
+
+    if ($oldversion < 2026041521) {
+        \local_multitenancy\gateway_manager::sync();
+        \local_multitenancy\registry_writer::sync();
+        upgrade_plugin_savepoint(true, 2026041521, 'local', 'multitenancy');
+    }
+
     return true;
 }

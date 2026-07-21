@@ -49,7 +49,14 @@ class gateway_diagnostic {
             return $out;
         }
 
-        if (!defined('MULTITENANCY_REGISTRY_DIR') || !MULTITENANCY_REGISTRY_DIR) {
+        $registrydir = '';
+        if (function_exists('local_multitenancy_resolve_registry_dir')) {
+            global $CFG;
+            $registrydir = local_multitenancy_resolve_registry_dir($CFG);
+        } else if (defined('MULTITENANCY_REGISTRY_DIR') && MULTITENANCY_REGISTRY_DIR) {
+            $registrydir = rtrim((string) MULTITENANCY_REGISTRY_DIR, '/\\');
+        }
+        if ($registrydir === '') {
             $out[] = [
                 'level' => self::LEVEL_ERROR,
                 'key' => 'registrydirundefined',
@@ -58,7 +65,6 @@ class gateway_diagnostic {
             return $out;
         }
 
-        $registrydir = rtrim(MULTITENANCY_REGISTRY_DIR, '/\\');
         $registryfile = $registrydir . '/registry.php';
 
         if (!is_dir($registrydir)) {

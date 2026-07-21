@@ -42,6 +42,17 @@ class admin_sync {
         'middlename', 'alternatename',
     ];
 
+    /**
+     * @var string[] Core config names that must stay tenant-specific and are never copied
+     * from the parent (identity, upgrade state, cache revisions, secrets, site admins).
+     */
+    private const CONFIG_EXCLUDE = [
+        'siteadmins', 'siteidentifier', 'version', 'allversionshash',
+        'themerev', 'jsrev', 'cssrev', 'templaterev', 'langrev', 'yuipatchlevel',
+        'localcachedirpurged', 'scheduledtaskreset', 'cronremotepassword',
+        'upgraderunning',
+    ];
+
     /** @var string[] */
     private const MYSQL_FAMILY = ['mysqli', 'mariadb', 'auroramysql'];
 
@@ -65,10 +76,6 @@ class admin_sync {
         ];
 
         $parentadmins = self::get_parent_site_admin_users();
-        if (!$parentadmins) {
-            $summary['messages'][] = 'No parent site administrators found.';
-            return $summary;
-        }
 
         $tenants = $DB->get_records('local_multitenancy_tenant', ['enabled' => 1], 'sortorder ASC, id ASC');
         foreach ($tenants as $tenant) {
@@ -119,21 +126,62 @@ class admin_sync {
         if ($parentadmins === null) {
             $parentadmins = self::get_parent_site_admin_users();
         }
-        if (!$parentadmins) {
-            return ['state' => 'skipped', 'detail' => 'No parent site administrators'];
-        }
         if (!database_provisioner::tenant_database_ready($tenant)) {
             return ['state' => 'skipped', 'detail' => 'Tenant database not ready'];
         }
 
+        $settings = self::get_parent_settings();
+
         $dbtype = (string) ($tenant->dbtype ?? '');
         if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
-            return self::sync_tenant_pg($tenant, $parentadmins);
+            $result = self::sync_tenant_pg($tenant, $parentadmins, $settings);
+        } else if (in_array($dbtype, self::MYSQL_FAMILY, true)) {
+            $result = self::sync_tenant_mysql($tenant, $parentadmins, $settings);
+        } else {
+            return ['state' => 'skipped', 'detail' => 'Unsupported dbtype: ' . $dbtype];
         }
-        if (in_array($dbtype, self::MYSQL_FAMILY, true)) {
-            return self::sync_tenant_mysql($tenant, $parentadmins);
+        if ($result['state'] === 'error') {
+            return $result;
         }
-        return ['state' => 'skipped', 'detail' => 'Unsupported dbtype: ' . $dbtype];
+
+        // Language packs live in dataroot (files), not the database, so copy them separately.
+        $lang = self::sync_language_packs($tenant);
+        $detail = $result['detail'];
+        if ($lang['state'] === 'error') {
+            $detail .= '; language packs: ' . $lang['detail'];
+        } else if ($lang['state'] === 'ok') {
+            $detail .= '; ' . $lang['detail'];
+        }
+
+        return ['state' => 'synced', 'detail' => $detail];
+    }
+
+    /**
+     * Read the parent site-administration settings to propagate to tenants.
+     *
+     * @return array{core: array<string, mixed>, plugins: array<int, array{plugin:string, name:string, value:mixed}>}
+     */
+    private static function get_parent_settings(): array {
+        global $DB;
+
+        $core = [];
+        foreach ($DB->get_records('config', null, '', 'id, name, value') as $row) {
+            if (in_array($row->name, self::CONFIG_EXCLUDE, true)) {
+                continue;
+            }
+            $core[$row->name] = $row->value;
+        }
+
+        $plugins = [];
+        foreach ($DB->get_records('config_plugins', null, '', 'id, plugin, name, value') as $row) {
+            // Never copy plugin version markers: they drive tenant upgrade state.
+            if ($row->name === 'version') {
+                continue;
+            }
+            $plugins[] = ['plugin' => $row->plugin, 'name' => $row->name, 'value' => $row->value];
+        }
+
+        return ['core' => $core, 'plugins' => $plugins];
     }
 
     /**
@@ -141,7 +189,7 @@ class admin_sync {
      * @param \stdClass[] $parentadmins
      * @return array{state:string, detail:string}
      */
-    private static function sync_tenant_mysql(\stdClass $tenant, array $parentadmins): array {
+    private static function sync_tenant_mysql(\stdClass $tenant, array $parentadmins, array $settings): array {
         $dbname = (string) ($tenant->dbname ?? '');
         $conn = @new \mysqli(
             (string) ($tenant->dbhost ?? ''),
@@ -167,16 +215,89 @@ class admin_sync {
             $tenantadminids[] = (int) $syncresult['userid'];
         }
 
-        $merge = self::merge_siteadmins_mysql($conn, $configtable, $tenantadminids);
+        if ($tenantadminids) {
+            $merge = self::merge_siteadmins_mysql($conn, $configtable, $tenantadminids);
+            if ($merge['state'] !== 'ok') {
+                $conn->close();
+                return ['state' => 'error', 'detail' => $merge['detail']];
+            }
+        }
+
+        $settingsresult = self::sync_settings_mysql($conn, $prefix, $settings);
         $conn->close();
-        if ($merge['state'] !== 'ok') {
-            return ['state' => 'error', 'detail' => $merge['detail']];
+        if ($settingsresult['state'] !== 'ok') {
+            return ['state' => 'error', 'detail' => $settingsresult['detail']];
         }
 
         return [
             'state' => 'synced',
-            'detail' => count($tenantadminids) . ' administrator(s) synced',
+            'detail' => count($tenantadminids) . ' administrator(s), ' . $settingsresult['detail'],
         ];
+    }
+
+    /**
+     * Copy parent config + config_plugins rows into the tenant database (upsert, non-destructive).
+     *
+     * @param \mysqli $conn
+     * @param string $prefix
+     * @param array{core: array<string, mixed>, plugins: array<int, array{plugin:string, name:string, value:mixed}>} $settings
+     * @return array{state:string, detail:string}
+     */
+    private static function sync_settings_mysql(\mysqli $conn, string $prefix, array $settings): array {
+        $configtable = '`' . str_replace('`', '``', $prefix . 'config') . '`';
+        $pluginstable = '`' . str_replace('`', '``', $prefix . 'config_plugins') . '`';
+
+        foreach ($settings['core'] as $name => $value) {
+            $sel = $conn->prepare("SELECT id FROM {$configtable} WHERE name = ?");
+            if (!$sel) {
+                return ['state' => 'error', 'detail' => 'config prepare failed: ' . $conn->error];
+            }
+            $sel->bind_param('s', $name);
+            $sel->execute();
+            $res = $sel->get_result();
+            $existingid = ($res && ($row = $res->fetch_assoc())) ? (int) $row['id'] : null;
+            $sel->close();
+
+            if ($existingid !== null) {
+                $sql = 'UPDATE ' . $configtable . ' SET value = ' . self::mysqli_value($conn, $value) .
+                    ' WHERE id = ' . $existingid;
+            } else {
+                $sql = 'INSERT INTO ' . $configtable . ' (name, value) VALUES (' .
+                    self::mysqli_value($conn, $name) . ', ' . self::mysqli_value($conn, $value) . ')';
+            }
+            if (!$conn->query($sql)) {
+                return ['state' => 'error', 'detail' => 'config sync failed for "' . $name . '": ' . $conn->error];
+            }
+        }
+
+        foreach ($settings['plugins'] as $row) {
+            $plugin = (string) $row['plugin'];
+            $name = (string) $row['name'];
+            $sel = $conn->prepare("SELECT id FROM {$pluginstable} WHERE plugin = ? AND name = ?");
+            if (!$sel) {
+                return ['state' => 'error', 'detail' => 'config_plugins prepare failed: ' . $conn->error];
+            }
+            $sel->bind_param('ss', $plugin, $name);
+            $sel->execute();
+            $res = $sel->get_result();
+            $existingid = ($res && ($erow = $res->fetch_assoc())) ? (int) $erow['id'] : null;
+            $sel->close();
+
+            if ($existingid !== null) {
+                $sql = 'UPDATE ' . $pluginstable . ' SET value = ' . self::mysqli_value($conn, $row['value']) .
+                    ' WHERE id = ' . $existingid;
+            } else {
+                $sql = 'INSERT INTO ' . $pluginstable . ' (plugin, name, value) VALUES (' .
+                    self::mysqli_value($conn, $plugin) . ', ' . self::mysqli_value($conn, $name) . ', ' .
+                    self::mysqli_value($conn, $row['value']) . ')';
+            }
+            if (!$conn->query($sql)) {
+                return ['state' => 'error', 'detail' => 'config_plugins sync failed for "' .
+                    $plugin . '/' . $name . '": ' . $conn->error];
+            }
+        }
+
+        return ['state' => 'ok', 'detail' => count($settings['core']) . ' setting(s) synced'];
     }
 
     /**
@@ -274,7 +395,7 @@ class admin_sync {
      * @param \stdClass[] $parentadmins
      * @return array{state:string, detail:string}
      */
-    private static function sync_tenant_pg(\stdClass $tenant, array $parentadmins): array {
+    private static function sync_tenant_pg(\stdClass $tenant, array $parentadmins, array $settings): array {
         if (!function_exists('pg_connect')) {
             return ['state' => 'error', 'detail' => 'pgsql extension not loaded'];
         }
@@ -299,16 +420,156 @@ class admin_sync {
             $tenantadminids[] = (int) $syncresult['userid'];
         }
 
-        $merge = self::merge_siteadmins_pg($conn, $configtable, $tenantadminids);
+        if ($tenantadminids) {
+            $merge = self::merge_siteadmins_pg($conn, $configtable, $tenantadminids);
+            if ($merge['state'] !== 'ok') {
+                pg_close($conn);
+                return ['state' => 'error', 'detail' => $merge['detail']];
+            }
+        }
+
+        $settingsresult = self::sync_settings_pg($conn, $prefix, $settings);
         pg_close($conn);
-        if ($merge['state'] !== 'ok') {
-            return ['state' => 'error', 'detail' => $merge['detail']];
+        if ($settingsresult['state'] !== 'ok') {
+            return ['state' => 'error', 'detail' => $settingsresult['detail']];
         }
 
         return [
             'state' => 'synced',
-            'detail' => count($tenantadminids) . ' administrator(s) synced',
+            'detail' => count($tenantadminids) . ' administrator(s), ' . $settingsresult['detail'],
         ];
+    }
+
+    /**
+     * Copy parent config + config_plugins rows into the tenant database (upsert, non-destructive).
+     *
+     * @param resource $conn
+     * @param string $prefix
+     * @param array{core: array<string, mixed>, plugins: array<int, array{plugin:string, name:string, value:mixed}>} $settings
+     * @return array{state:string, detail:string}
+     */
+    private static function sync_settings_pg($conn, string $prefix, array $settings): array {
+        $configtable = postgres_helper::quote_ident($prefix . 'config');
+        $pluginstable = postgres_helper::quote_ident($prefix . 'config_plugins');
+
+        foreach ($settings['core'] as $name => $value) {
+            $res = @pg_query_params($conn, "SELECT id FROM {$configtable} WHERE name = $1", [$name]);
+            $existingid = ($res && ($row = pg_fetch_assoc($res))) ? (int) $row['id'] : null;
+            if ($res) {
+                pg_free_result($res);
+            }
+
+            if ($existingid !== null) {
+                $ok = @pg_query_params($conn, "UPDATE {$configtable} SET value = $1 WHERE id = $2", [$value, $existingid]);
+            } else {
+                $ok = @pg_query_params($conn, "INSERT INTO {$configtable} (name, value) VALUES ($1, $2)", [$name, $value]);
+            }
+            if (!$ok) {
+                return ['state' => 'error', 'detail' => 'config sync failed for "' . $name . '": ' . pg_last_error($conn)];
+            }
+        }
+
+        foreach ($settings['plugins'] as $row) {
+            $plugin = (string) $row['plugin'];
+            $name = (string) $row['name'];
+            $res = @pg_query_params(
+                $conn,
+                "SELECT id FROM {$pluginstable} WHERE plugin = $1 AND name = $2",
+                [$plugin, $name]
+            );
+            $existingid = ($res && ($erow = pg_fetch_assoc($res))) ? (int) $erow['id'] : null;
+            if ($res) {
+                pg_free_result($res);
+            }
+
+            if ($existingid !== null) {
+                $ok = @pg_query_params(
+                    $conn,
+                    "UPDATE {$pluginstable} SET value = $1 WHERE id = $2",
+                    [$row['value'], $existingid]
+                );
+            } else {
+                $ok = @pg_query_params(
+                    $conn,
+                    "INSERT INTO {$pluginstable} (plugin, name, value) VALUES ($1, $2, $3)",
+                    [$plugin, $name, $row['value']]
+                );
+            }
+            if (!$ok) {
+                return ['state' => 'error', 'detail' => 'config_plugins sync failed for "' .
+                    $plugin . '/' . $name . '": ' . pg_last_error($conn)];
+            }
+        }
+
+        return ['state' => 'ok', 'detail' => count($settings['core']) . ' setting(s) synced'];
+    }
+
+    /**
+     * Copy language pack directories from the parent dataroot into the tenant dataroot.
+     *
+     * @param \stdClass $tenant
+     * @return array{state:string, detail:string}
+     */
+    private static function sync_language_packs(\stdClass $tenant): array {
+        global $CFG;
+
+        $dataroot = (string) ($tenant->dataroot ?? '');
+        if ($dataroot === '') {
+            return ['state' => 'skipped', 'detail' => 'tenant dataroot unknown'];
+        }
+
+        $src = rtrim((string) $CFG->dataroot, '/\\') . DIRECTORY_SEPARATOR . 'lang';
+        $dst = rtrim($dataroot, '/\\') . DIRECTORY_SEPARATOR . 'lang';
+        if (!is_dir($src)) {
+            return ['state' => 'skipped', 'detail' => 'no parent language packs'];
+        }
+
+        $count = self::copy_dir_recursive($src, $dst);
+        if ($count === null) {
+            return ['state' => 'error', 'detail' => 'language pack copy failed'];
+        }
+        return ['state' => 'ok', 'detail' => $count . ' language file(s) copied'];
+    }
+
+    /**
+     * Recursively copy a directory tree, overwriting existing files.
+     *
+     * @param string $src
+     * @param string $dst
+     * @return int|null Number of files copied, or null on failure.
+     */
+    private static function copy_dir_recursive(string $src, string $dst): ?int {
+        if (!is_dir($src)) {
+            return 0;
+        }
+        if (!is_dir($dst) && !@mkdir($dst, 0777, true) && !is_dir($dst)) {
+            return null;
+        }
+        $items = @scandir($src);
+        if ($items === false) {
+            return null;
+        }
+        $count = 0;
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            $spath = $src . DIRECTORY_SEPARATOR . $item;
+            $dpath = $dst . DIRECTORY_SEPARATOR . $item;
+            if (is_dir($spath)) {
+                $sub = self::copy_dir_recursive($spath, $dpath);
+                if ($sub === null) {
+                    return null;
+                }
+                $count += $sub;
+            } else {
+                if (!@copy($spath, $dpath)) {
+                    return null;
+                }
+                $count++;
+            }
+        }
+        return $count;
     }
 
     /**

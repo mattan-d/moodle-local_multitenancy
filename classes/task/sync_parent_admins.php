@@ -38,6 +38,16 @@ class sync_parent_admins extends \core\task\scheduled_task {
      * @return void
      */
     public function execute() {
+        global $CFG;
+
+        // Only the parent (hub) site owns the tenant list; tenant DBs contain a cloned
+        // copy of it, so running this from a tenant cron would sync in the wrong direction.
+        require_once($CFG->dirroot . '/local/multitenancy/lib.php');
+        if (function_exists('local_multitenancy_is_parent_site') && !local_multitenancy_is_parent_site()) {
+            mtrace('local_multitenancy: skipping parent admin/settings sync (not the parent site).');
+            return;
+        }
+
         $summary = \local_multitenancy\admin_sync::sync_all_enabled_tenants();
         mtrace('local_multitenancy: parent admin sync finished.');
         mtrace('  tenants: ' . $summary['tenants']);

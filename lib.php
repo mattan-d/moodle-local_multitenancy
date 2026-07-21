@@ -561,7 +561,7 @@ function local_multitenancy_login_tenant_picker_html(): string {
 
     $records = $DB->get_records_select(
         'local_multitenancy_tenant',
-        'enabled = 1 AND showonlogin = 1',
+        "enabled = 1 AND showonlogin = 1 AND (provisionstatus = 'complete' OR provisionstatus IS NULL OR provisionstatus = '')",
         null,
         'sortorder ASC, id ASC',
         'id,shortcode,name'

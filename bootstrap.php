@@ -60,15 +60,90 @@ function local_multitenancy_request_is_https(): bool {
  * @return void
  */
 function local_multitenancy_abort_unknown_gateway_tenant(string $code): void {
+    local_multitenancy_clear_tenant_cookies();
     if (!headers_sent()) {
         http_response_code(404);
         header('Content-Type: text/plain; charset=UTF-8');
     }
     echo "Multitenancy: no enabled tenant with code \"" . $code . "\" in registry.\n\n";
-    echo "Add the tenant in Site administration → Multitenancy, then save or rebuild registry.\n";
-    echo "(עברית) הוסף את הדייר בניהול האתר, ואז שמור או בנה מחדש את registry.\n\n";
+    echo "Add the tenant in Site administration → Multitenancy (Manage tenants) and save.\n";
+    echo "(עברית) הוסף את הדייר בניהול האתר ושמור.\n\n";
     echo "Registry file: " . (defined('MULTITENANCY_REGISTRY_DIR') ? rtrim(MULTITENANCY_REGISTRY_DIR, '/\\') . '/registry.php' : '(not set)') . "\n";
+    echo "Recovery: open /local/multitenancy/leave.php to clear tenant cookies.\n";
     exit(1);
+}
+
+/**
+ * Stop when gateway/cookie points at a tenant that is not provisioned yet.
+ *
+ * @param string $code
+ * @param string $status
+ * @return void
+ */
+function local_multitenancy_abort_tenant_not_ready(string $code, string $status): void {
+    local_multitenancy_clear_tenant_cookies();
+    if (!headers_sent()) {
+        http_response_code(503);
+        header('Content-Type: text/plain; charset=UTF-8');
+    }
+    echo "Multitenancy: tenant \"" . $code . "\" is not ready yet (provision status: " . $status . ").\n\n";
+    echo "Do not open the tenant gateway until provisioning is Complete.\n";
+    echo "Check errors on the parent site: Site administration → Local plugins → Manage tenants.\n";
+    echo "(עברית) הדייר עדיין לא מוכן. בדוק שגיאות בעמוד ניהול הדיירים באתר האב.\n\n";
+    echo "Recovery: /local/multitenancy/leave.php\n";
+    exit(1);
+}
+
+/**
+ * Resolve registry directory (MULTITENANCY_REGISTRY_DIR constant or {dataroot}/multitenancy).
+ *
+ * @param stdClass|null $cfg
+ * @return string Absolute path or empty string.
+ */
+function local_multitenancy_resolve_registry_dir(?stdClass $cfg = null): string {
+    if (defined('MULTITENANCY_REGISTRY_DIR') && MULTITENANCY_REGISTRY_DIR) {
+        return rtrim((string) MULTITENANCY_REGISTRY_DIR, "/\\\0");
+    }
+    $dataroot = '';
+    if ($cfg !== null && !empty($cfg->dataroot)) {
+        $dataroot = (string) $cfg->dataroot;
+    } else if (!empty($GLOBALS['CFG']) && !empty($GLOBALS['CFG']->dataroot)) {
+        $dataroot = (string) $GLOBALS['CFG']->dataroot;
+    }
+    if ($dataroot === '') {
+        return '';
+    }
+    return rtrim($dataroot, "/\\\0") . '/multitenancy';
+}
+
+/**
+ * Whether a registry tenant row may be applied (enabled + provision complete).
+ *
+ * @param array $tenant
+ * @return bool
+ */
+function local_multitenancy_tenant_row_is_ready(array $tenant): bool {
+    if (empty($tenant['enabled'])) {
+        return false;
+    }
+    // Legacy registry files without provisionstatus remain usable.
+    if (!array_key_exists('provisionstatus', $tenant)) {
+        return true;
+    }
+    return (string) $tenant['provisionstatus'] === 'complete';
+}
+
+/**
+ * @param string $requesturi
+ * @return bool
+ */
+function local_multitenancy_request_is_install_or_upgrade(string $requesturi): bool {
+    $path = parse_url($requesturi, PHP_URL_PATH);
+    if (is_string($path) && preg_match('#/(?:install|upgrade)\.php$#', $path)) {
+        return true;
+    }
+    $script = $_SERVER['SCRIPT_NAME'] ?? '';
+    return is_string($script) && (bool) preg_match('#/(?:install|upgrade)\.php$#', $script);
 }
 
 /**
@@ -435,11 +510,15 @@ function local_multitenancy_apply_tenant(stdClass $cfg, array $tenant, bool $set
  * @return void
  */
 function local_multitenancy_bootstrap(stdClass $cfg): void {
-    if (!defined('MULTITENANCY_REGISTRY_DIR') || !MULTITENANCY_REGISTRY_DIR) {
+    $registrydir = local_multitenancy_resolve_registry_dir($cfg);
+    if ($registrydir === '') {
         return;
     }
+    if (!defined('MULTITENANCY_REGISTRY_DIR')) {
+        define('MULTITENANCY_REGISTRY_DIR', $registrydir);
+    }
 
-    $registryfile = rtrim(MULTITENANCY_REGISTRY_DIR, '/\\') . '/registry.php';
+    $registryfile = $registrydir . '/registry.php';
     if (!is_readable($registryfile)) {
         return;
     }
@@ -458,7 +537,7 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
             return;
         }
         $tenant = local_multitenancy_registry_row_by_shortcode($map, $code);
-        if ($tenant && !empty($tenant['enabled'])) {
+        if ($tenant && local_multitenancy_tenant_row_is_ready($tenant)) {
             local_multitenancy_apply_tenant($cfg, $tenant, false);
         }
         return;
@@ -469,6 +548,16 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
         local_multitenancy_clear_tenant_cookies();
         return;
     }
+
+    // Break ERR_TOO_MANY_REDIRECTS: empty tenant DB → /install.php ↔ parent home.
+    // Always use parent config for install/upgrade, and drop a sticky tenant cookie.
+    if (local_multitenancy_request_is_install_or_upgrade($requesturi)) {
+        if (!empty($_COOKIE[LOCAL_MULTITENANCY_COOKIE]) || defined('LOCAL_MULTITENANCY_ENTRY_SHORTCODE')) {
+            local_multitenancy_clear_tenant_cookies();
+        }
+        return;
+    }
+
     if (local_multitenancy_request_is_parent_admin($requesturi)) {
         return;
     }
@@ -476,7 +565,7 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
     $tenant = null;
     $setcookie = false;
 
-    // Gateway URL always names a tenant; if missing from registry, abort (do not load parent Moodle
+    // Gateway URL always names a tenant; if missing/not ready, abort (do not load parent Moodle
     // with a gateway SCRIPT_NAME — that yields a blank page in initialise_fullme()).
     if (defined('LOCAL_MULTITENANCY_ENTRY_SHORTCODE')) {
         $code = (string) LOCAL_MULTITENANCY_ENTRY_SHORTCODE;
@@ -484,20 +573,26 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
             local_multitenancy_abort_unknown_gateway_tenant($code !== '' ? $code : '(invalid)');
         }
         $candidate = local_multitenancy_registry_row_by_shortcode($map, $code);
-        if ($candidate && !empty($candidate['enabled'])) {
-            $tenant = $candidate;
-            $setcookie = true;
-        } else {
+        if (!$candidate || empty($candidate['enabled'])) {
             local_multitenancy_abort_unknown_gateway_tenant($code);
         }
+        if (!local_multitenancy_tenant_row_is_ready($candidate)) {
+            $status = (string) ($candidate['provisionstatus'] ?? 'unknown');
+            local_multitenancy_abort_tenant_not_ready($code, $status);
+        }
+        $tenant = $candidate;
+        $setcookie = true;
     }
 
     if (!$tenant && !empty($_COOKIE[LOCAL_MULTITENANCY_COOKIE])) {
         $code = (string) $_COOKIE[LOCAL_MULTITENANCY_COOKIE];
         if (preg_match('/^[a-zA-Z0-9_-]+$/', $code)) {
             $candidate = local_multitenancy_registry_row_by_shortcode($map, $code);
-            if ($candidate && !empty($candidate['enabled'])) {
+            if ($candidate && local_multitenancy_tenant_row_is_ready($candidate)) {
                 $tenant = $candidate;
+            } else {
+                // Stale cookie from a failed/incomplete provision must not break the parent site.
+                local_multitenancy_clear_tenant_cookies();
             }
         }
     }
@@ -508,11 +603,13 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
     } else {
         $host = strtolower($host);
     }
-    if (!$tenant && $host !== '' && isset($map[$host])) {
-        $tenant = $map[$host];
+    if (!$tenant && $host !== '' && isset($map[$host]) && is_array($map[$host])) {
+        if (local_multitenancy_tenant_row_is_ready($map[$host])) {
+            $tenant = $map[$host];
+        }
     }
 
-    if (!$tenant || empty($tenant['enabled'])) {
+    if (!$tenant || !local_multitenancy_tenant_row_is_ready($tenant)) {
         return;
     }
 

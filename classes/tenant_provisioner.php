@@ -94,10 +94,6 @@ class tenant_provisioner {
             if ($result['state'] === 'provisioned') {
                 $key = $copycourses ? 'dbprovisioned' : 'dbprovisionednocourses';
                 $messages[] = get_string($key, 'local_multitenancy', $tenant->dbname);
-                $syncresult = admin_sync::sync_tenant($tenant);
-                if ($syncresult['state'] === 'error') {
-                    $messages[] = $syncresult['detail'];
-                }
             } else if ($result['state'] === 'skipped_notempty') {
                 $messages[] = get_string('dbprovisionskippednotempty', 'local_multitenancy', $tenant->dbname);
             } else if ($result['state'] === 'skipped_unsupported') {
@@ -105,6 +101,15 @@ class tenant_provisioner {
             } else {
                 return self::fail($tenantid, get_string('dbprovisionfailed', 'local_multitenancy', $result['detail']));
             }
+        }
+
+        // Propagate parent site-administration settings and language packs to the tenant,
+        // independent of course data. Skips automatically if the tenant DB is not ready.
+        $syncresult = admin_sync::sync_tenant($tenant);
+        if ($syncresult['state'] === 'synced') {
+            $messages[] = get_string('settingssynced', 'local_multitenancy', $syncresult['detail']);
+        } else if ($syncresult['state'] === 'error') {
+            $messages[] = get_string('settingssyncfailed', 'local_multitenancy', $syncresult['detail']);
         }
 
         gateway_manager::sync();
@@ -141,6 +146,8 @@ class tenant_provisioner {
      */
     private static function fail(int $tenantid, string $errormessage): array {
         self::set_status($tenantid, self::STATUS_FAILED, $errormessage);
+        // Keep registry in sync so bootstrap refuses this tenant and manage UI can show the error.
+        registry_writer::sync();
         return ['ok' => false, 'detail' => $errormessage];
     }
 

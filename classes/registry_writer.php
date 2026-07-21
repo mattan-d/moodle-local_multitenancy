@@ -28,6 +28,31 @@ defined('MOODLE_INTERNAL') || die();
 class registry_writer {
 
     /**
+     * Resolve and ensure the registry directory ({dataroot}/multitenancy by default).
+     *
+     * @return string Absolute path or empty on failure.
+     */
+    public static function ensure_registry_dir(): string {
+        global $CFG;
+
+        $dir = '';
+        if (function_exists('local_multitenancy_resolve_registry_dir')) {
+            $dir = local_multitenancy_resolve_registry_dir($CFG);
+        } else if (!empty($CFG->dataroot)) {
+            $dir = rtrim((string) $CFG->dataroot, "/\\\0") . '/multitenancy';
+        }
+        if ($dir === '') {
+            return '';
+        }
+
+        if (!is_dir($dir) && !make_writable_directory($dir, false)) {
+            return '';
+        }
+
+        return $dir;
+    }
+
+    /**
      * Rebuild registry.php from the database.
      *
      * @return bool True if a file was written
@@ -35,16 +60,8 @@ class registry_writer {
     public static function sync(): bool {
         global $DB;
 
-        $dir = get_config('local_multitenancy', 'registrydir');
-        if (!$dir) {
-            return false;
-        }
-        $dir = rtrim($dir, "/\\\0");
+        $dir = self::ensure_registry_dir();
         if ($dir === '') {
-            return false;
-        }
-
-        if (!is_dir($dir) && !make_writable_directory($dir, false)) {
             return false;
         }
 
@@ -70,6 +87,7 @@ class registry_writer {
                 'shortcode' => $r->shortcode,
                 'name' => $r->name,
                 'enabled' => (int) $r->enabled,
+                'provisionstatus' => (string) ($r->provisionstatus ?? tenant_provisioner::STATUS_COMPLETE),
                 'midurim' => (string) ($r->midurim ?? ''),
                 'midurimformat' => (int) ($r->midurimformat ?? FORMAT_HTML),
                 'wwwroot' => $wwwroot,
