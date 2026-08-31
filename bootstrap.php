@@ -95,6 +95,114 @@ function local_multitenancy_abort_tenant_not_ready(string $code, string $status)
 }
 
 /**
+ * Stop when registry says Complete but tenant DB is empty / not a Moodle install.
+ * Prevents Moodle core from redirecting to /install.php (ERR_TOO_MANY_REDIRECTS).
+ *
+ * @param string $code
+ * @return void
+ */
+function local_multitenancy_abort_tenant_db_not_installed(string $code): void {
+    local_multitenancy_clear_tenant_cookies();
+    if (!headers_sent()) {
+        http_response_code(503);
+        header('Content-Type: text/plain; charset=UTF-8');
+    }
+    echo "Multitenancy: tenant \"" . $code . "\" database is not a finished Moodle install.\n\n";
+    echo "Opening the gateway would start /install.php and can cause too many redirects.\n";
+    echo "Fix on the parent site: Manage tenants → Diagnose for this tenant, then re-provision.\n";
+    echo "(עברית) מסד הדייר אינו התקנת Moodle תקינה. אל תפתח את ה־gateway — השתמש בדיאגנוזה ובהקמה מחדש.\n\n";
+    echo "Recovery: /local/multitenancy/leave.php\n";
+    exit(1);
+}
+
+/**
+ * Lightweight check (no Moodle APIs): does tenant DB contain config.version?
+ *
+ * @param array $tenant Registry row
+ * @return bool
+ */
+function local_multitenancy_tenant_db_is_installed(array $tenant): bool {
+    $dbname = (string) ($tenant['dbname'] ?? '');
+    $prefix = (string) ($tenant['prefix'] ?? 'mdl_');
+    $dbtype = (string) ($tenant['dbtype'] ?? '');
+    $dbhost = (string) ($tenant['dbhost'] ?? '');
+    $dbuser = (string) ($tenant['dbuser'] ?? '');
+    $dbpass = (string) ($tenant['dbpass'] ?? '');
+    if ($dbname === '') {
+        return false;
+    }
+
+    if ($dbtype === 'pgsql') {
+        if (!function_exists('pg_connect')) {
+            return false;
+        }
+        $parts = [];
+        if ($dbhost !== '') {
+            $parts[] = "host='" . str_replace("'", "\\'", $dbhost) . "'";
+        }
+        if (!empty($tenant['dboptions']['dbport'])) {
+            $parts[] = 'port=' . (int) $tenant['dboptions']['dbport'];
+        }
+        if ($dbuser !== '') {
+            $parts[] = "user='" . str_replace("'", "\\'", $dbuser) . "'";
+        }
+        if ($dbpass !== '') {
+            $parts[] = "password='" . str_replace("'", "\\'", $dbpass) . "'";
+        }
+        $parts[] = "dbname='" . str_replace("'", "\\'", $dbname) . "'";
+        $conn = @pg_connect(implode(' ', $parts));
+        if (!$conn) {
+            return false;
+        }
+        $table = '"' . str_replace('"', '""', $prefix . 'config') . '"';
+        $res = @pg_query($conn, "SELECT value FROM {$table} WHERE name = 'version' LIMIT 1");
+        $ok = false;
+        if ($res && ($row = pg_fetch_assoc($res)) && isset($row['value']) && (string) $row['value'] !== '') {
+            $ok = true;
+        }
+        if ($res) {
+            pg_free_result($res);
+        }
+        pg_close($conn);
+        return $ok;
+    }
+
+    if (!in_array($dbtype, ['mysqli', 'mariadb', 'auroramysql'], true)) {
+        // Unknown driver — do not block (avoid false 503).
+        return true;
+    }
+    if (!class_exists('mysqli', false) && !extension_loaded('mysqli')) {
+        return false;
+    }
+    $port = 0;
+    $socket = null;
+    if (!empty($tenant['dboptions']) && is_array($tenant['dboptions'])) {
+        if (!empty($tenant['dboptions']['dbport'])) {
+            $port = (int) $tenant['dboptions']['dbport'];
+        }
+        if (!empty($tenant['dboptions']['dbsocket'])) {
+            $socket = (string) $tenant['dboptions']['dbsocket'];
+        }
+    }
+    if ($socket) {
+        $conn = @new mysqli(null, $dbuser, $dbpass, $dbname, $port, $socket);
+    } else {
+        $conn = @new mysqli($dbhost, $dbuser, $dbpass, $dbname, $port);
+    }
+    if ($conn->connect_errno) {
+        return false;
+    }
+    $table = '`' . str_replace('`', '``', $prefix . 'config') . '`';
+    $res = @$conn->query("SELECT value FROM {$table} WHERE name = 'version' LIMIT 1");
+    $ok = false;
+    if ($res && ($row = $res->fetch_assoc()) && isset($row['value']) && (string) $row['value'] !== '') {
+        $ok = true;
+    }
+    $conn->close();
+    return $ok;
+}
+
+/**
  * Resolve registry directory (MULTITENANCY_REGISTRY_DIR constant or {dataroot}/multitenancy).
  *
  * @param stdClass|null $cfg
@@ -611,6 +719,13 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
 
     if (!$tenant || !local_multitenancy_tenant_row_is_ready($tenant)) {
         return;
+    }
+
+    // Safety net: registry may say Complete while DB is empty/broken (failed clone).
+    // Applying tenant config would make Moodle redirect to /install.php → redirect loop.
+    if (!local_multitenancy_tenant_db_is_installed($tenant)) {
+        $code = (string) ($tenant['shortcode'] ?? '');
+        local_multitenancy_abort_tenant_db_not_installed($code !== '' ? $code : '(unknown)');
     }
 
     local_multitenancy_apply_tenant($cfg, $tenant, $setcookie);

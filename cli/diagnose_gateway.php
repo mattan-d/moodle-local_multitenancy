@@ -64,6 +64,9 @@ foreach ($results as $row) {
         ($row['level'] === gateway_diagnostic::LEVEL_WARN ? '[WRN] ' : '[OK ] ');
     $msg = get_string('cli_diag_' . $row['key'], 'local_multitenancy', $row['detail']);
     cli_writeln($prefix . $msg);
+    if (!empty($row['fix'])) {
+        cli_writeln('       FIX: ' . get_string('diagnose_' . $row['fix'], 'local_multitenancy'));
+    }
     if ($row['level'] === gateway_diagnostic::LEVEL_ERROR) {
         $haderror = true;
     }

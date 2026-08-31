@@ -113,7 +113,9 @@ $table->data = [];
 foreach ($tenants as $t) {
     $edit = new moodle_url('/local/multitenancy/edit.php', ['id' => $t->id]);
     $delete = new moodle_url('/local/multitenancy/delete.php', ['id' => $t->id]);
-    $actions = $OUTPUT->action_icon($edit, new pix_icon('t/edit', get_string('edit'))) .
+    $diagnose = new moodle_url('/local/multitenancy/diagnose.php', ['id' => $t->id]);
+    $actions = $OUTPUT->action_icon($diagnose, new pix_icon('i/search', get_string('diagnose', 'local_multitenancy'))) .
+        $OUTPUT->action_icon($edit, new pix_icon('t/edit', get_string('edit'))) .
         $OUTPUT->action_icon($delete, new pix_icon('t/delete', get_string('delete')));
     $gateway = new moodle_url('/local/multitenancy/users/' . rawurlencode($t->shortcode) . '/');
     $ready = ((string) ($t->provisionstatus ?? '') === \local_multitenancy\tenant_provisioner::STATUS_COMPLETE)

@@ -103,14 +103,26 @@ class tenant_provisioner {
             }
         }
 
+        // Never mark Complete unless Moodle is actually installed in the tenant DB.
+        // Empty/broken DBs previously opened /install.php and caused ERR_TOO_MANY_REDIRECTS.
+        if (!database_provisioner::moodle_is_installed($tenant)) {
+            return self::fail(
+                $tenantid,
+                get_string('dbnotinstalled', 'local_multitenancy', $tenant->dbname)
+            );
+        }
+
         // Propagate parent site-administration settings and language packs to the tenant,
-        // independent of course data. Skips automatically if the tenant DB is not ready.
+        // independent of course data.
         $syncresult = admin_sync::sync_tenant($tenant);
         if ($syncresult['state'] === 'synced') {
             $messages[] = get_string('settingssynced', 'local_multitenancy', $syncresult['detail']);
         } else if ($syncresult['state'] === 'error') {
             $messages[] = get_string('settingssyncfailed', 'local_multitenancy', $syncresult['detail']);
         }
+
+        // Mark complete in DB before writing registry so gateway sees the ready status.
+        self::set_status($tenantid, self::STATUS_COMPLETE, null);
 
         gateway_manager::sync();
         if (!registry_writer::sync()) {
@@ -119,7 +131,6 @@ class tenant_provisioner {
             $messages[] = get_string('registryupdated', 'local_multitenancy');
         }
 
-        self::set_status($tenantid, self::STATUS_COMPLETE, null);
         return ['ok' => true, 'detail' => implode("\n", $messages)];
     }
 

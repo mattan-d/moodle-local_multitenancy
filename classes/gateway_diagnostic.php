@@ -233,6 +233,72 @@ class gateway_diagnostic {
                 'level' => self::LEVEL_ERROR,
                 'key' => 'dbconnectfail',
                 'detail' => $dbmsg,
+                'fix' => 'fix_dbconnect',
+            ];
+        }
+
+        // Deep checks using the parent DB tenant row when available.
+        $dbtenant = self::load_tenant_record($shortcode);
+        if ($dbtenant) {
+            $status = (string) ($dbtenant->provisionstatus ?? '');
+            $out[] = [
+                'level' => ($status === tenant_provisioner::STATUS_COMPLETE) ? self::LEVEL_OK : self::LEVEL_WARN,
+                'key' => 'provisionstatus',
+                'detail' => $status !== '' ? $status : '(empty)',
+            ];
+            if (!empty($dbtenant->provisionerror)) {
+                $out[] = [
+                    'level' => self::LEVEL_ERROR,
+                    'key' => 'provisionerror',
+                    'detail' => (string) $dbtenant->provisionerror,
+                    'fix' => 'fix_reprovision',
+                ];
+            }
+
+            $installed = database_provisioner::moodle_is_installed($dbtenant);
+            if ($installed) {
+                $out[] = [
+                    'level' => self::LEVEL_OK,
+                    'key' => 'moodleinstalled',
+                    'detail' => (string) $dbtenant->dbname,
+                ];
+            } else {
+                $out[] = [
+                    'level' => self::LEVEL_ERROR,
+                    'key' => 'moodlenotinstalled',
+                    'detail' => (string) $dbtenant->dbname,
+                    'fix' => 'fix_moodlenotinstalled',
+                ];
+                if ($status === tenant_provisioner::STATUS_COMPLETE) {
+                    $out[] = [
+                        'level' => self::LEVEL_ERROR,
+                        'key' => 'redirectlooprisk',
+                        'detail' => $shortcode,
+                        'fix' => 'fix_redirectloop',
+                    ];
+                }
+            }
+
+            $cliok = self::cli_tools_available((string) ($dbtenant->dbtype ?? ''));
+            if (!$cliok && in_array((string) ($dbtenant->dbtype ?? ''), ['pgsql'], true)) {
+                $out[] = [
+                    'level' => self::LEVEL_ERROR,
+                    'key' => 'pgdumpmissing',
+                    'detail' => 'pg_dump/psql',
+                    'fix' => 'fix_pgdump',
+                ];
+            } else if ($cliok) {
+                $out[] = [
+                    'level' => self::LEVEL_OK,
+                    'key' => 'clitoolsok',
+                    'detail' => (string) ($dbtenant->dbtype ?? ''),
+                ];
+            }
+        } else {
+            $out[] = [
+                'level' => self::LEVEL_WARN,
+                'key' => 'tenantdbrowmissing',
+                'detail' => $shortcode,
             ];
         }
 
@@ -241,8 +307,50 @@ class gateway_diagnostic {
             'key' => 'hintweb',
             'detail' => $CFG->wwwroot . '/local/multitenancy/users/' . rawurlencode($shortcode) . '/',
         ];
+        $out[] = [
+            'level' => self::LEVEL_OK,
+            'key' => 'hintleave',
+            'detail' => $CFG->wwwroot . '/local/multitenancy/leave.php',
+        ];
 
         return $out;
+    }
+
+    /**
+     * @param string $shortcode
+     * @return \stdClass|null
+     */
+    protected static function load_tenant_record(string $shortcode): ?\stdClass {
+        global $DB;
+        try {
+            $rec = $DB->get_record('local_multitenancy_tenant', ['shortcode' => $shortcode]);
+            return $rec ?: null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
+     * @param string $dbtype
+     * @return bool
+     */
+    protected static function cli_tools_available(string $dbtype): bool {
+        if ($dbtype === 'pgsql') {
+            return self::has_command('pg_dump') && self::has_command('psql');
+        }
+        if (in_array($dbtype, ['mysqli', 'mariadb', 'auroramysql'], true)) {
+            return self::has_command('mysqldump') && self::has_command('mysql');
+        }
+        return false;
+    }
+
+    /**
+     * @param string $cmd
+     * @return bool
+     */
+    protected static function has_command(string $cmd): bool {
+        $result = trim((string) shell_exec('command -v ' . escapeshellarg($cmd) . ' 2>/dev/null'));
+        return $result !== '';
     }
 
     /**

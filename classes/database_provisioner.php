@@ -63,11 +63,18 @@ class database_provisioner {
         }
 
         $clidetail = '';
-        // Course filtering exists only in the PHP fallback clone path.
-        $trycli = self::can_clone_via_cli($dbtype) && $copycourses;
-        if ($trycli) {
+        // Always prefer CLI dump tools when available (full schema + sequences/indexes).
+        // Previously CLI was skipped when "copy courses" was off, which forced a broken
+        // PostgreSQL PHP fallback and led to Moodle /install.php + redirect loops.
+        if (self::can_clone_via_cli($dbtype)) {
             $cliresult = self::clone_via_cli($tenant, $tenantdbname);
             if ($cliresult['ok']) {
+                if (!$copycourses) {
+                    $strip = self::strip_non_frontpage_courses($tenant, $tenantdbname);
+                    if ($strip['state'] !== 'ok') {
+                        return ['state' => 'error', 'detail' => $strip['detail']];
+                    }
+                }
                 $adminreset = self::reset_to_initial_admin($tenant, $tenantdbname);
                 if ($adminreset['state'] !== 'ok') {
                     return ['state' => 'error', 'detail' => $adminreset['detail']];
@@ -77,7 +84,16 @@ class database_provisioner {
             $clidetail = $cliresult['detail'];
         }
 
-        // Fallback for environments without DB dump tools in PATH.
+        // PostgreSQL PHP fallback cannot recreate sequences/PKs reliably — require pg_dump.
+        if (in_array($dbtype, self::POSTGRES_FAMILY, true) && !self::can_clone_via_cli($dbtype)) {
+            return [
+                'state' => 'error',
+                'detail' => 'PostgreSQL clone requires pg_dump and psql in PATH' .
+                    ($clidetail !== '' ? ' (CLI attempt: ' . $clidetail . ')' : ''),
+            ];
+        }
+
+        // Fallback for MySQL-family environments without dump tools in PATH.
         $phpresult = self::clone_via_php($tenant, $tenantdbname, $copycourses);
         if (!$phpresult['ok']) {
             $detail = $phpresult['detail'];
@@ -325,119 +341,15 @@ class database_provisioner {
      * @return array{ok:bool, detail:string}
      */
     private static function clone_via_php_pgsql(\stdClass $tenant, string $tenantdbname, bool $copycourses): array {
+        // Incomplete schema recreation (no sequences/indexes) caused empty Moodle installs.
+        // Prefer CLI; refuse the fragile PHP path rather than marking provision "complete".
         if (self::can_clone_via_cli('pgsql')) {
             return self::clone_via_cli($tenant, $tenantdbname);
         }
-        if (!function_exists('pg_connect')) {
-            return ['ok' => false, 'detail' => 'pgsql PHP extension not loaded'];
-        }
-
-        $sourceconn = postgres_helper::connect_parent();
-        $targetconn = postgres_helper::connect_tenant($tenant, $tenantdbname);
-        if (!$sourceconn) {
-            return ['ok' => false, 'detail' => 'Parent PostgreSQL connect failed for PHP clone'];
-        }
-        if (!$targetconn) {
-            pg_close($sourceconn);
-            return ['ok' => false, 'detail' => 'Tenant PostgreSQL connect failed for PHP clone'];
-        }
-
-        if (function_exists('set_time_limit')) {
-            @set_time_limit(0);
-        }
-
-        @pg_query($targetconn, 'SET session_replication_role = replica');
-
-        $prefix = (string) ($tenant->dbprefix ?? 'mdl_');
-        $tables = postgres_helper::list_prefixed_tables($sourceconn, $prefix);
-        if (!$tables) {
-            pg_close($sourceconn);
-            pg_close($targetconn);
-            return ['ok' => false, 'detail' => 'Parent PostgreSQL DB has no tables to clone'];
-        }
-
-        foreach ($tables as $table) {
-            $qtable = postgres_helper::quote_ident($table);
-            if (!@pg_query($targetconn, 'DROP TABLE IF EXISTS ' . $qtable . ' CASCADE')) {
-                pg_close($sourceconn);
-                pg_close($targetconn);
-                return ['ok' => false, 'detail' => 'DROP TABLE failed for ' . $table . ': ' . pg_last_error($targetconn)];
-            }
-
-            $ddl = self::pgsql_build_create_table($sourceconn, $table);
-            if ($ddl === null || !@pg_query($targetconn, $ddl)) {
-                pg_close($sourceconn);
-                pg_close($targetconn);
-                return ['ok' => false, 'detail' => 'CREATE TABLE failed for ' . $table . ': ' . pg_last_error($targetconn)];
-            }
-
-            $datares = @pg_query($sourceconn, 'SELECT * FROM ' . $qtable);
-            if (!$datares) {
-                pg_close($sourceconn);
-                pg_close($targetconn);
-                return ['ok' => false, 'detail' => 'SELECT failed for ' . $table . ': ' . pg_last_error($sourceconn)];
-            }
-
-            $columns = [];
-            $numfields = pg_num_fields($datares);
-            for ($i = 0; $i < $numfields; $i++) {
-                $columns[] = postgres_helper::quote_ident((string) pg_field_name($datares, $i));
-            }
-            $courseindexes = [];
-            $categoryindexes = [];
-            $idindex = null;
-            for ($i = 0; $i < $numfields; $i++) {
-                $fname = (string) pg_field_name($datares, $i);
-                if ($fname === 'course' || $fname === 'courseid') {
-                    $courseindexes[] = $i;
-                }
-                if ($fname === 'category' || $fname === 'categoryid') {
-                    $categoryindexes[] = $i;
-                }
-                if ($fname === 'id') {
-                    $idindex = $i;
-                }
-            }
-            $columnlist = implode(',', $columns);
-
-            $batch = [];
-            $batchsize = 100;
-            while ($row = pg_fetch_row($datares)) {
-                if (!self::should_copy_row($table, $prefix, $row, $courseindexes, $categoryindexes, $idindex, $copycourses)) {
-                    continue;
-                }
-                $values = [];
-                foreach ($row as $idx => $value) {
-                    $values[] = self::pgsql_sql_value($targetconn, $value, pg_field_type($datares, (int) $idx));
-                }
-                $batch[] = '(' . implode(',', $values) . ')';
-                if (count($batch) >= $batchsize) {
-                    $sql = 'INSERT INTO ' . $qtable . ' (' . $columnlist . ') VALUES ' . implode(',', $batch);
-                    if (!@pg_query($targetconn, $sql)) {
-                        pg_free_result($datares);
-                        pg_close($sourceconn);
-                        pg_close($targetconn);
-                        return ['ok' => false, 'detail' => 'INSERT failed for ' . $table . ': ' . pg_last_error($targetconn)];
-                    }
-                    $batch = [];
-                }
-            }
-            pg_free_result($datares);
-
-            if (!empty($batch)) {
-                $sql = 'INSERT INTO ' . $qtable . ' (' . $columnlist . ') VALUES ' . implode(',', $batch);
-                if (!@pg_query($targetconn, $sql)) {
-                    pg_close($sourceconn);
-                    pg_close($targetconn);
-                    return ['ok' => false, 'detail' => 'INSERT failed for ' . $table . ': ' . pg_last_error($targetconn)];
-                }
-            }
-        }
-
-        @pg_query($targetconn, 'SET session_replication_role = DEFAULT');
-        pg_close($sourceconn);
-        pg_close($targetconn);
-        return ['ok' => true, 'detail' => ''];
+        return [
+            'ok' => false,
+            'detail' => 'PostgreSQL requires pg_dump/psql in PATH (PHP schema clone is not supported)',
+        ];
     }
 
     /**
@@ -592,8 +504,207 @@ class database_provisioner {
         if ($newcount === null || $newcount === 0) {
             return ['state' => 'error', 'detail' => 'Provision finished but tenant DB is still empty'];
         }
+        if (!self::moodle_is_installed($tenant)) {
+            return [
+                'state' => 'error',
+                'detail' => 'Tenant DB has tables but Moodle is not installed (missing config.version). ' .
+                    'Gateway would open /install.php and can cause redirect loops.',
+            ];
+        }
 
         return ['state' => 'provisioned', 'detail' => (string) $newcount];
+    }
+
+    /**
+     * Whether the tenant database looks like a finished Moodle install (config.version present).
+     *
+     * @param \stdClass $tenant
+     * @return bool
+     */
+    public static function moodle_is_installed(\stdClass $tenant): bool {
+        $dbname = (string) ($tenant->dbname ?? '');
+        if ($dbname === '') {
+            return false;
+        }
+        $prefix = (string) ($tenant->dbprefix ?? 'mdl_');
+        $dbtype = (string) ($tenant->dbtype ?? '');
+
+        if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
+            if (!function_exists('pg_connect')) {
+                return false;
+            }
+            $conn = postgres_helper::connect_tenant($tenant, $dbname);
+            if (!$conn) {
+                return false;
+            }
+            $table = postgres_helper::quote_ident($prefix . 'config');
+            $res = @pg_query($conn, "SELECT value FROM {$table} WHERE name = 'version' LIMIT 1");
+            $ok = false;
+            if ($res && ($row = pg_fetch_assoc($res)) && isset($row['value']) && (string) $row['value'] !== '') {
+                $ok = true;
+            }
+            if ($res) {
+                pg_free_result($res);
+            }
+            pg_close($conn);
+            return $ok;
+        }
+
+        if (!in_array($dbtype, self::MYSQL_FAMILY, true)) {
+            return false;
+        }
+        $conn = @new \mysqli(
+            (string) ($tenant->dbhost ?? ''),
+            (string) ($tenant->dbuser ?? ''),
+            (string) ($tenant->dbpass ?? ''),
+            $dbname
+        );
+        if ($conn->connect_errno) {
+            return false;
+        }
+        $table = '`' . str_replace('`', '``', $prefix . 'config') . '`';
+        $res = $conn->query("SELECT value FROM {$table} WHERE name = 'version' LIMIT 1");
+        $ok = false;
+        if ($res && ($row = $res->fetch_assoc()) && isset($row['value']) && (string) $row['value'] !== '') {
+            $ok = true;
+        }
+        $conn->close();
+        return $ok;
+    }
+
+    /**
+     * After a full CLI clone, remove non-frontpage courses when copy-courses was disabled.
+     *
+     * @param \stdClass $tenant
+     * @param string $tenantdbname
+     * @return array{state:string, detail:string}
+     */
+    private static function strip_non_frontpage_courses(\stdClass $tenant, string $tenantdbname): array {
+        $dbtype = (string) ($tenant->dbtype ?? '');
+        if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
+            return self::strip_non_frontpage_courses_pg($tenant, $tenantdbname);
+        }
+        return self::strip_non_frontpage_courses_mysql($tenant, $tenantdbname);
+    }
+
+    /**
+     * @param \stdClass $tenant
+     * @param string $tenantdbname
+     * @return array{state:string, detail:string}
+     */
+    private static function strip_non_frontpage_courses_mysql(\stdClass $tenant, string $tenantdbname): array {
+        $prefix = (string) ($tenant->dbprefix ?? 'mdl_');
+        $conn = @new \mysqli(
+            (string) ($tenant->dbhost ?? ''),
+            (string) ($tenant->dbuser ?? ''),
+            (string) ($tenant->dbpass ?? ''),
+            $tenantdbname
+        );
+        if ($conn->connect_errno) {
+            return ['state' => 'error', 'detail' => 'Strip courses: connect failed: ' . $conn->connect_error];
+        }
+        $conn->query('SET FOREIGN_KEY_CHECKS=0');
+        $coursetable = '`' . str_replace('`', '``', $prefix . 'course') . '`';
+        $cattable = '`' . str_replace('`', '``', $prefix . 'course_categories') . '`';
+        if (!$conn->query("DELETE FROM {$coursetable} WHERE id > 1")) {
+            $err = $conn->error;
+            $conn->query('SET FOREIGN_KEY_CHECKS=1');
+            $conn->close();
+            return ['state' => 'error', 'detail' => 'Strip courses failed: ' . $err];
+        }
+        $conn->query("DELETE FROM {$cattable} WHERE id > 1");
+        // Best-effort: remove orphaned rows keyed by course/courseid > 1.
+        $tablesres = $conn->query('SHOW TABLES');
+        if ($tablesres) {
+            while ($row = $tablesres->fetch_row()) {
+                $table = (string) ($row[0] ?? '');
+                if ($table === '' || strpos($table, $prefix) !== 0) {
+                    continue;
+                }
+                if ($table === $prefix . 'course' || $table === $prefix . 'course_categories') {
+                    continue;
+                }
+                $qtable = '`' . str_replace('`', '``', $table) . '`';
+                $cols = $conn->query('SHOW COLUMNS FROM ' . $qtable);
+                if (!$cols) {
+                    continue;
+                }
+                $hascourse = false;
+                $hascourseid = false;
+                while ($col = $cols->fetch_assoc()) {
+                    $cname = (string) ($col['Field'] ?? '');
+                    if ($cname === 'course') {
+                        $hascourse = true;
+                    }
+                    if ($cname === 'courseid') {
+                        $hascourseid = true;
+                    }
+                }
+                if ($hascourse) {
+                    $conn->query("DELETE FROM {$qtable} WHERE course > 1");
+                }
+                if ($hascourseid) {
+                    $conn->query("DELETE FROM {$qtable} WHERE courseid > 1");
+                }
+            }
+            $tablesres->close();
+        }
+        $conn->query('SET FOREIGN_KEY_CHECKS=1');
+        $conn->close();
+        return ['state' => 'ok', 'detail' => ''];
+    }
+
+    /**
+     * @param \stdClass $tenant
+     * @param string $tenantdbname
+     * @return array{state:string, detail:string}
+     */
+    private static function strip_non_frontpage_courses_pg(\stdClass $tenant, string $tenantdbname): array {
+        if (!function_exists('pg_connect')) {
+            return ['state' => 'error', 'detail' => 'Strip courses: pgsql extension not loaded'];
+        }
+        $prefix = (string) ($tenant->dbprefix ?? 'mdl_');
+        $conn = postgres_helper::connect_tenant($tenant, $tenantdbname);
+        if (!$conn) {
+            return ['state' => 'error', 'detail' => 'Strip courses: connect failed'];
+        }
+        @pg_query($conn, 'SET session_replication_role = replica');
+        $coursetable = postgres_helper::quote_ident($prefix . 'course');
+        $cattable = postgres_helper::quote_ident($prefix . 'course_categories');
+        if (!@pg_query($conn, "DELETE FROM {$coursetable} WHERE id > 1")) {
+            $err = pg_last_error($conn);
+            pg_close($conn);
+            return ['state' => 'error', 'detail' => 'Strip courses failed: ' . $err];
+        }
+        @pg_query($conn, "DELETE FROM {$cattable} WHERE id > 1");
+        $tables = postgres_helper::list_prefixed_tables($conn, $prefix);
+        foreach ($tables as $table) {
+            if ($table === $prefix . 'course' || $table === $prefix . 'course_categories') {
+                continue;
+            }
+            $qtable = postgres_helper::quote_ident($table);
+            $colres = @pg_query_params(
+                $conn,
+                "SELECT column_name FROM information_schema.columns
+                  WHERE table_schema = 'public' AND table_name = $1
+                    AND column_name IN ('course', 'courseid')",
+                [$table]
+            );
+            if (!$colres) {
+                continue;
+            }
+            while ($col = pg_fetch_assoc($colres)) {
+                $cname = (string) ($col['column_name'] ?? '');
+                if ($cname === 'course' || $cname === 'courseid') {
+                    @pg_query($conn, 'DELETE FROM ' . $qtable . ' WHERE ' .
+                        postgres_helper::quote_ident($cname) . ' > 1');
+                }
+            }
+            pg_free_result($colres);
+        }
+        @pg_query($conn, 'SET session_replication_role = DEFAULT');
+        pg_close($conn);
+        return ['state' => 'ok', 'detail' => ''];
     }
 
     /**
@@ -717,6 +828,89 @@ class database_provisioner {
         }
         $count = self::count_tables_for_tenant($tenant, $dbname);
         return $count !== null && $count > 0;
+    }
+
+    /**
+     * Drop all tables in the tenant database so provisioning can clone again.
+     * Used when a previous clone left a broken (non-empty, not installed) DB.
+     *
+     * @param \stdClass $tenant
+     * @return array{ok:bool, detail:string}
+     */
+    public static function empty_tenant_database(\stdClass $tenant): array {
+        global $CFG;
+
+        $dbname = (string) ($tenant->dbname ?? '');
+        if ($dbname === '' || $dbname === (string) $CFG->dbname) {
+            return ['ok' => false, 'detail' => 'Refusing to empty invalid/parent database name'];
+        }
+        $dbtype = (string) ($tenant->dbtype ?? '');
+        if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
+            return self::empty_tenant_database_pg($tenant, $dbname);
+        }
+        if (!in_array($dbtype, self::MYSQL_FAMILY, true)) {
+            return ['ok' => false, 'detail' => 'Unsupported dbtype for empty: ' . $dbtype];
+        }
+        $conn = @new \mysqli(
+            (string) ($tenant->dbhost ?? ''),
+            (string) ($tenant->dbuser ?? ''),
+            (string) ($tenant->dbpass ?? ''),
+            $dbname
+        );
+        if ($conn->connect_errno) {
+            return ['ok' => false, 'detail' => 'Connect failed: ' . $conn->connect_error];
+        }
+        $conn->query('SET FOREIGN_KEY_CHECKS=0');
+        $res = $conn->query('SHOW TABLES');
+        if (!$res) {
+            $conn->close();
+            return ['ok' => false, 'detail' => 'SHOW TABLES failed'];
+        }
+        while ($row = $res->fetch_row()) {
+            $table = (string) ($row[0] ?? '');
+            if ($table === '') {
+                continue;
+            }
+            $q = '`' . str_replace('`', '``', $table) . '`';
+            if (!$conn->query('DROP TABLE IF EXISTS ' . $q)) {
+                $err = $conn->error;
+                $conn->query('SET FOREIGN_KEY_CHECKS=1');
+                $conn->close();
+                return ['ok' => false, 'detail' => 'DROP TABLE failed: ' . $err];
+            }
+        }
+        $res->close();
+        $conn->query('SET FOREIGN_KEY_CHECKS=1');
+        $conn->close();
+        return ['ok' => true, 'detail' => ''];
+    }
+
+    /**
+     * @param \stdClass $tenant
+     * @param string $dbname
+     * @return array{ok:bool, detail:string}
+     */
+    private static function empty_tenant_database_pg(\stdClass $tenant, string $dbname): array {
+        if (!function_exists('pg_connect')) {
+            return ['ok' => false, 'detail' => 'pgsql extension not loaded'];
+        }
+        $conn = postgres_helper::connect_tenant($tenant, $dbname);
+        if (!$conn) {
+            return ['ok' => false, 'detail' => 'Connect failed'];
+        }
+        // Drop and recreate public schema (clears tables, sequences, etc.).
+        if (!@pg_query($conn, 'DROP SCHEMA public CASCADE')) {
+            $err = pg_last_error($conn);
+            pg_close($conn);
+            return ['ok' => false, 'detail' => 'DROP SCHEMA failed: ' . $err];
+        }
+        if (!@pg_query($conn, 'CREATE SCHEMA public')) {
+            $err = pg_last_error($conn);
+            pg_close($conn);
+            return ['ok' => false, 'detail' => 'CREATE SCHEMA failed: ' . $err];
+        }
+        pg_close($conn);
+        return ['ok' => true, 'detail' => ''];
     }
 
     /**
