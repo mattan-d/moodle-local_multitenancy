@@ -38,7 +38,7 @@ class tenant_provisioner {
      * Queue adhoc provisioning for a tenant.
      *
      * @param int $tenantid
-     * @param bool $initdbfromparent
+     * @param bool $initdbfromparent Kept for callers; DB init is always performed.
      * @param bool $copycourses
      * @return void
      */
@@ -56,11 +56,46 @@ class tenant_provisioner {
         $task = new \local_multitenancy\task\provision_tenant();
         $task->set_custom_data((object) [
             'tenantid' => $tenantid,
-            'initdb' => $initdbfromparent,
+            'initdb' => true,
             'copycourses' => $copycourses,
         ]);
         $task->set_component('local_multitenancy');
         \core\task\manager::queue_adhoc_task($task, true);
+    }
+
+    /**
+     * Automatically re-queue tenants that failed because the DB clone was incomplete.
+     * No admin click required — runs from manage page / scheduled admin sync.
+     *
+     * @return int Number of tenants re-queued.
+     */
+    public static function retry_incomplete_failures(): int {
+        global $DB;
+
+        $failed = $DB->get_records('local_multitenancy_tenant', ['provisionstatus' => self::STATUS_FAILED]);
+        $queued = 0;
+        $now = time();
+        foreach ($failed as $tenant) {
+            // Avoid tight retry loops (wait at least 2 minutes since last status change).
+            if (!empty($tenant->timemodified) && ($now - (int) $tenant->timemodified) < 120) {
+                continue;
+            }
+            // Only auto-retry clone/install failures, not dataroot permission issues etc.
+            $err = (string) ($tenant->provisionerror ?? '');
+            $cloneissue = (stripos($err, 'config.version') !== false)
+                || (stripos($err, 'clone') !== false)
+                || (stripos($err, 'TEMPLATE') !== false)
+                || (stripos($err, 'pg_dump') !== false)
+                || (stripos($err, 'not a finished Moodle') !== false)
+                || (stripos($err, 'אינו התקנת Moodle') !== false)
+                || (stripos($err, 'חסר config.version') !== false);
+            if (!$cloneissue) {
+                continue;
+            }
+            self::queue((int) $tenant->id, true, false);
+            $queued++;
+        }
+        return $queued;
     }
 
     /**
@@ -89,22 +124,27 @@ class tenant_provisioner {
         }
         $messages[] = get_string('dbschemaautocreated', 'local_multitenancy', $tenant->dbname);
 
-        if ($initdbfromparent) {
-            $result = database_provisioner::provision_if_empty($tenant, $copycourses);
-            if ($result['state'] === 'provisioned') {
-                $key = $copycourses ? 'dbprovisioned' : 'dbprovisionednocourses';
-                $messages[] = get_string($key, 'local_multitenancy', $tenant->dbname);
-            } else if ($result['state'] === 'skipped_notempty') {
-                $messages[] = get_string('dbprovisionskippednotempty', 'local_multitenancy', $tenant->dbname);
-            } else if ($result['state'] === 'skipped_unsupported') {
-                $messages[] = get_string('dbprovisionskippedunsupported', 'local_multitenancy', $tenant->dbtype);
-            } else {
-                return self::fail($tenantid, get_string('dbprovisionfailed', 'local_multitenancy', $result['detail']));
+        // Always initialize the tenant DB from the parent automatically (no admin checkbox).
+        $result = database_provisioner::provision_if_empty($tenant, $copycourses, true);
+        if ($result['state'] === 'provisioned') {
+            $key = $copycourses ? 'dbprovisioned' : 'dbprovisionednocourses';
+            $messages[] = get_string($key, 'local_multitenancy', $tenant->dbname);
+        } else if ($result['state'] === 'skipped_notempty') {
+            $messages[] = get_string('dbprovisionskippednotempty', 'local_multitenancy', $tenant->dbname);
+        } else if ($result['state'] === 'skipped_unsupported') {
+            return self::fail($tenantid, get_string('dbprovisionskippedunsupported', 'local_multitenancy', $tenant->dbtype));
+        } else {
+            return self::fail($tenantid, get_string('dbprovisionfailed', 'local_multitenancy', $result['detail']));
+        }
+
+        // Safety net: if still not installed, wipe once more and retry clone automatically.
+        if (!database_provisioner::moodle_is_installed($tenant)) {
+            $retry = database_provisioner::provision_if_empty($tenant, $copycourses, true);
+            if ($retry['state'] !== 'provisioned' && $retry['state'] !== 'skipped_notempty') {
+                return self::fail($tenantid, get_string('dbprovisionfailed', 'local_multitenancy', $retry['detail']));
             }
         }
 
-        // Never mark Complete unless Moodle is actually installed in the tenant DB.
-        // Empty/broken DBs previously opened /install.php and caused ERR_TOO_MANY_REDIRECTS.
         if (!database_provisioner::moodle_is_installed($tenant)) {
             return self::fail(
                 $tenantid,

@@ -36,9 +36,11 @@ class database_provisioner {
 
     /**
      * @param \stdClass $tenant Tenant row from local_multitenancy_tenant.
+     * @param bool $copycourses
+     * @param bool $allowwipe If true and DB has tables but Moodle is not installed, wipe and clone.
      * @return array{state:string, detail:string}
      */
-    public static function provision_if_empty(\stdClass $tenant, bool $copycourses = true): array {
+    public static function provision_if_empty(\stdClass $tenant, bool $copycourses = true, bool $allowwipe = false): array {
         global $CFG;
 
         $dbtype = (string) ($tenant->dbtype ?? '');
@@ -58,57 +60,222 @@ class database_provisioner {
         if ($tablecount === null) {
             return ['state' => 'error', 'detail' => 'Could not inspect tenant DB tables'];
         }
+
+        // Auto-heal broken previous attempts (tables without config.version).
         if ($tablecount > 0) {
-            return ['state' => 'skipped_notempty', 'detail' => (string) $tablecount];
+            if (self::moodle_is_installed($tenant)) {
+                return ['state' => 'skipped_notempty', 'detail' => (string) $tablecount];
+            }
+            if (!$allowwipe) {
+                return [
+                    'state' => 'error',
+                    'detail' => 'Tenant DB has tables but Moodle is not installed (missing config.version)',
+                ];
+            }
+            $wiped = self::empty_tenant_database($tenant);
+            if (!$wiped['ok']) {
+                return ['state' => 'error', 'detail' => 'Auto-wipe of broken tenant DB failed: ' . $wiped['detail']];
+            }
+            $tablecount = 0;
         }
 
-        $clidetail = '';
-        // Always prefer CLI dump tools when available (full schema + sequences/indexes).
-        // Previously CLI was skipped when "copy courses" was off, which forced a broken
-        // PostgreSQL PHP fallback and led to Moodle /install.php + redirect loops.
+        $errors = [];
+
+        // PostgreSQL on the same server: filesystem-level clone, no pg_dump required.
+        if (in_array($dbtype, self::POSTGRES_FAMILY, true) && self::is_same_pg_server($tenant)) {
+            $templateresult = self::clone_via_pg_template($tenant, $tenantdbname);
+            if ($templateresult['ok']) {
+                return self::finalize_clone($tenant, $tenantdbname, $copycourses);
+            }
+            $errors[] = 'TEMPLATE: ' . $templateresult['detail'];
+        }
+
+        // CLI dump tools (with common-path discovery).
         if (self::can_clone_via_cli($dbtype)) {
             $cliresult = self::clone_via_cli($tenant, $tenantdbname);
             if ($cliresult['ok']) {
-                if (!$copycourses) {
-                    $strip = self::strip_non_frontpage_courses($tenant, $tenantdbname);
-                    if ($strip['state'] !== 'ok') {
-                        return ['state' => 'error', 'detail' => $strip['detail']];
-                    }
-                }
+                return self::finalize_clone($tenant, $tenantdbname, $copycourses);
+            }
+            $errors[] = 'CLI: ' . $cliresult['detail'];
+        } else if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
+            $errors[] = 'CLI: pg_dump/psql not found in PATH or common locations';
+        }
+
+        // MySQL-family PHP fallback (SHOW CREATE TABLE is reliable).
+        if (in_array($dbtype, self::MYSQL_FAMILY, true)) {
+            $phpresult = self::clone_via_php($tenant, $tenantdbname, $copycourses);
+            if ($phpresult['ok']) {
+                // copycourses already applied inside PHP clone filter.
                 $adminreset = self::reset_to_initial_admin($tenant, $tenantdbname);
                 if ($adminreset['state'] !== 'ok') {
                     return ['state' => 'error', 'detail' => $adminreset['detail']];
                 }
                 return self::verify_after_clone($tenant, $tenantdbname);
             }
-            $clidetail = $cliresult['detail'];
+            $errors[] = 'PHP: ' . $phpresult['detail'];
         }
 
-        // PostgreSQL PHP fallback cannot recreate sequences/PKs reliably — require pg_dump.
-        if (in_array($dbtype, self::POSTGRES_FAMILY, true) && !self::can_clone_via_cli($dbtype)) {
-            return [
-                'state' => 'error',
-                'detail' => 'PostgreSQL clone requires pg_dump and psql in PATH' .
-                    ($clidetail !== '' ? ' (CLI attempt: ' . $clidetail . ')' : ''),
-            ];
-        }
+        return [
+            'state' => 'error',
+            'detail' => 'Automatic DB clone failed. ' . implode(' | ', $errors),
+        ];
+    }
 
-        // Fallback for MySQL-family environments without dump tools in PATH.
-        $phpresult = self::clone_via_php($tenant, $tenantdbname, $copycourses);
-        if (!$phpresult['ok']) {
-            $detail = $phpresult['detail'];
-            if ($clidetail !== '') {
-                $detail = 'CLI clone failed (' . $clidetail . '); PHP fallback failed (' . $detail . ')';
+    /**
+     * Post-clone steps shared by TEMPLATE / CLI paths.
+     *
+     * @param \stdClass $tenant
+     * @param string $tenantdbname
+     * @param bool $copycourses
+     * @return array{state:string, detail:string}
+     */
+    private static function finalize_clone(\stdClass $tenant, string $tenantdbname, bool $copycourses): array {
+        if (!$copycourses) {
+            $strip = self::strip_non_frontpage_courses($tenant, $tenantdbname);
+            if ($strip['state'] !== 'ok') {
+                return ['state' => 'error', 'detail' => $strip['detail']];
             }
-            return ['state' => 'error', 'detail' => $detail];
         }
-
         $adminreset = self::reset_to_initial_admin($tenant, $tenantdbname);
         if ($adminreset['state'] !== 'ok') {
             return ['state' => 'error', 'detail' => $adminreset['detail']];
         }
-
         return self::verify_after_clone($tenant, $tenantdbname);
+    }
+
+    /**
+     * Whether tenant PostgreSQL host/port match the parent (required for TEMPLATE clone).
+     *
+     * @param \stdClass $tenant
+     * @return bool
+     */
+    private static function is_same_pg_server(\stdClass $tenant): bool {
+        global $CFG;
+        $thost = strtolower(trim((string) ($tenant->dbhost ?? '')));
+        $phost = strtolower(trim((string) $CFG->dbhost));
+        if ($thost === '' || $phost === '') {
+            return false;
+        }
+        // Treat localhost aliases as equivalent.
+        $aliases = ['localhost' => true, '127.0.0.1' => true, '::1' => true];
+        if (isset($aliases[$thost]) && isset($aliases[$phost])) {
+            // Same local machine family — still compare ports.
+        } else if ($thost !== $phost) {
+            return false;
+        }
+        $tport = (int) (postgres_helper::dboptions_for_tenant($tenant)['dbport'] ?? 5432);
+        $pport = (int) (postgres_helper::dboptions_for_parent()['dbport'] ?? 5432);
+        if ($tport <= 0) {
+            $tport = 5432;
+        }
+        if ($pport <= 0) {
+            $pport = 5432;
+        }
+        return $tport === $pport;
+    }
+
+    /**
+     * Clone via CREATE DATABASE … WITH TEMPLATE (fast, complete, no CLI tools).
+     * Briefly terminates other sessions on parent/tenant DBs (required by PostgreSQL).
+     *
+     * @param \stdClass $tenant
+     * @param string $tenantdbname
+     * @return array{ok:bool, detail:string}
+     */
+    private static function clone_via_pg_template(\stdClass $tenant, string $tenantdbname): array {
+        global $CFG;
+
+        if (!function_exists('pg_connect')) {
+            return ['ok' => false, 'detail' => 'pgsql extension not loaded'];
+        }
+
+        $opts = postgres_helper::dboptions_for_tenant($tenant);
+        $conn = postgres_helper::connect(
+            (string) ($tenant->dbhost ?? ''),
+            (string) ($tenant->dbuser ?? ''),
+            (string) ($tenant->dbpass ?? ''),
+            'postgres',
+            $opts
+        );
+        if (!$conn) {
+            return ['ok' => false, 'detail' => 'Could not connect to postgres maintenance DB for TEMPLATE clone'];
+        }
+
+        $parentdb = (string) $CFG->dbname;
+        $parentq = postgres_helper::quote_ident($parentdb);
+        $tenantq = postgres_helper::quote_ident($tenantdbname);
+
+        // TEMPLATE source cannot have other sessions; end them (parent Moodle reconnects).
+        @pg_query_params(
+            $conn,
+            "SELECT pg_terminate_backend(pid)
+               FROM pg_stat_activity
+              WHERE datname = $1 AND pid <> pg_backend_pid()",
+            [$parentdb]
+        );
+        @pg_query_params(
+            $conn,
+            "SELECT pg_terminate_backend(pid)
+               FROM pg_stat_activity
+              WHERE datname = $1 AND pid <> pg_backend_pid()",
+            [$tenantdbname]
+        );
+
+        // Target must not exist for CREATE … WITH TEMPLATE.
+        $exists = @pg_query_params($conn, 'SELECT 1 FROM pg_database WHERE datname = $1', [$tenantdbname]);
+        if ($exists && pg_num_rows($exists) > 0) {
+            pg_free_result($exists);
+            if (!@pg_query($conn, 'DROP DATABASE ' . $tenantq)) {
+                $err = pg_last_error($conn);
+                pg_close($conn);
+                self::reconnect_parent_moodle_db();
+                return ['ok' => false, 'detail' => 'DROP DATABASE before TEMPLATE failed: ' . $err];
+            }
+        } else if ($exists) {
+            pg_free_result($exists);
+        }
+
+        $sql = 'CREATE DATABASE ' . $tenantq . ' WITH TEMPLATE ' . $parentq;
+        if (!@pg_query($conn, $sql)) {
+            $err = pg_last_error($conn);
+            pg_close($conn);
+            self::reconnect_parent_moodle_db();
+            return ['ok' => false, 'detail' => 'CREATE DATABASE WITH TEMPLATE failed: ' . $err];
+        }
+        pg_close($conn);
+        self::reconnect_parent_moodle_db();
+        return ['ok' => true, 'detail' => ''];
+    }
+
+    /**
+     * Reconnect Moodle's global $DB after pg_terminate_backend on the parent database.
+     *
+     * @return void
+     */
+    private static function reconnect_parent_moodle_db(): void {
+        global $CFG, $DB;
+        if (!isset($DB) || !is_object($DB)) {
+            return;
+        }
+        try {
+            if (method_exists($DB, 'dispose')) {
+                $DB->dispose();
+            }
+        } catch (\Throwable $e) {
+            // Ignore dispose errors on a dead connection.
+        }
+        try {
+            $DB->connect(
+                $CFG->dbhost,
+                $CFG->dbuser,
+                $CFG->dbpass,
+                $CFG->dbname,
+                $CFG->prefix,
+                !empty($CFG->dboptions) && is_array($CFG->dboptions) ? $CFG->dboptions : []
+            );
+        } catch (\Throwable $e) {
+            // Provisioner will fail on the next parent DB write if reconnect fails.
+        }
     }
 
     /**
@@ -135,10 +302,15 @@ class database_provisioner {
             );
             $sourceenv = self::build_pg_password_env((string) $CFG->dbpass);
             $targetenv = self::build_pg_password_env((string) ($tenant->dbpass ?? ''));
-            $cmd = trim($sourceenv . ' pg_dump --clean --if-exists --no-owner --no-privileges ' .
+            $pgdump = self::resolve_command('pg_dump');
+            $psql = self::resolve_command('psql');
+            if ($pgdump === null || $psql === null) {
+                return ['ok' => false, 'detail' => 'pg_dump/psql not found'];
+            }
+            $cmd = trim($sourceenv . ' ' . escapeshellarg($pgdump) . ' --clean --if-exists --no-owner --no-privileges ' .
                 implode(' ', $sourceargs)) .
                 ' | ' .
-                trim($targetenv . ' psql ' . implode(' ', $targetargs));
+                trim($targetenv . ' ' . escapeshellarg($psql) . ' ' . implode(' ', $targetargs));
             $output = [];
             $exitcode = 0;
             exec($cmd . ' 2>&1', $output, $exitcode);
@@ -149,10 +321,15 @@ class database_provisioner {
             return ['ok' => true, 'detail' => ''];
         }
 
+        $mysqldump = self::resolve_command('mysqldump');
+        $mysql = self::resolve_command('mysql');
+        if ($mysqldump === null || $mysql === null) {
+            return ['ok' => false, 'detail' => 'mysqldump/mysql not found'];
+        }
         $sourceargs = self::build_mysql_args((string) $CFG->dbhost, (string) $CFG->dbuser, (string) $CFG->dbpass, (string) $CFG->dbname);
         $targetargs = self::build_mysql_args((string) ($tenant->dbhost ?? ''), (string) ($tenant->dbuser ?? ''), (string) ($tenant->dbpass ?? ''), $tenantdbname);
-        $cmd = 'mysqldump --single-transaction --quick --skip-lock-tables ' .
-            implode(' ', $sourceargs) . ' | mysql ' . implode(' ', $targetargs);
+        $cmd = escapeshellarg($mysqldump) . ' --single-transaction --quick --skip-lock-tables ' .
+            implode(' ', $sourceargs) . ' | ' . escapeshellarg($mysql) . ' ' . implode(' ', $targetargs);
 
         $output = [];
         $exitcode = 0;
@@ -966,8 +1143,48 @@ class database_provisioner {
      * @return bool
      */
     private static function has_command(string $cmd): bool {
-        $result = trim((string) shell_exec('command -v ' . escapeshellarg($cmd) . ' 2>/dev/null'));
-        return $result !== '';
+        return self::resolve_command($cmd) !== null;
+    }
+
+    /**
+     * Resolve an executable from PATH and common install locations (no manual PATH setup).
+     *
+     * @param string $cmd
+     * @return string|null Absolute path or null.
+     */
+    private static function resolve_command(string $cmd): ?string {
+        static $cache = [];
+        if (array_key_exists($cmd, $cache)) {
+            return $cache[$cmd];
+        }
+
+        $candidates = [];
+        $which = trim((string) shell_exec('command -v ' . escapeshellarg($cmd) . ' 2>/dev/null'));
+        if ($which !== '') {
+            $candidates[] = $which;
+        }
+        $candidates = array_merge($candidates, [
+            '/usr/bin/' . $cmd,
+            '/usr/local/bin/' . $cmd,
+            '/bin/' . $cmd,
+            '/opt/homebrew/bin/' . $cmd,
+            '/usr/lib/postgresql/bin/' . $cmd,
+        ]);
+        foreach (glob('/usr/pgsql-*/bin/' . $cmd) ?: [] as $path) {
+            $candidates[] = $path;
+        }
+        foreach (glob('/usr/lib/postgresql/*/bin/' . $cmd) ?: [] as $path) {
+            $candidates[] = $path;
+        }
+
+        foreach ($candidates as $path) {
+            if (is_string($path) && $path !== '' && is_executable($path)) {
+                $cache[$cmd] = $path;
+                return $path;
+            }
+        }
+        $cache[$cmd] = null;
+        return null;
     }
 
     /**

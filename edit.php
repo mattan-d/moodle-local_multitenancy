@@ -191,11 +191,11 @@ if ($data = $form->get_data()) {
     \local_multitenancy\gateway_manager::sync();
     $registrywritten = \local_multitenancy\registry_writer::sync();
 
-    $initdb = $isnew && !empty($data->initdbfromparent);
     $copycourses = $isnew && !empty($data->copycoursesdata);
 
     if ($isnew) {
-        \local_multitenancy\tenant_provisioner::queue((int) $row->id, $initdb, $copycourses);
+        // Always clone parent DB automatically (no manual init checkbox).
+        \local_multitenancy\tenant_provisioner::queue((int) $row->id, true, $copycourses);
         \core\notification::success(get_string('tenantprovisionqueued', 'local_multitenancy', $row->shortcode));
     } else if ($registrywritten) {
         \core\notification::success(get_string('registryupdated', 'local_multitenancy'));

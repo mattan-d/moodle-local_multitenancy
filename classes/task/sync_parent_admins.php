@@ -48,6 +48,11 @@ class sync_parent_admins extends \core\task\scheduled_task {
             return;
         }
 
+        $retried = \local_multitenancy\tenant_provisioner::retry_incomplete_failures();
+        if ($retried > 0) {
+            mtrace('local_multitenancy: auto-retried incomplete provisioning for ' . $retried . ' tenant(s).');
+        }
+
         $summary = \local_multitenancy\admin_sync::sync_all_enabled_tenants();
         mtrace('local_multitenancy: parent admin sync finished.');
         mtrace('  tenants: ' . $summary['tenants']);

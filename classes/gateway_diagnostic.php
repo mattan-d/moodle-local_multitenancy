@@ -282,7 +282,7 @@ class gateway_diagnostic {
             $cliok = self::cli_tools_available((string) ($dbtenant->dbtype ?? ''));
             if (!$cliok && in_array((string) ($dbtenant->dbtype ?? ''), ['pgsql'], true)) {
                 $out[] = [
-                    'level' => self::LEVEL_ERROR,
+                    'level' => self::LEVEL_WARN,
                     'key' => 'pgdumpmissing',
                     'detail' => 'pg_dump/psql',
                     'fix' => 'fix_pgdump',

@@ -88,9 +88,7 @@ class tenant_edit_form extends \moodleform {
         $mform->addHelpButton('midurim_editor', 'midurim', 'local_multitenancy');
 
         if (!$editing) {
-            $mform->addElement('advcheckbox', 'initdbfromparent', get_string('initdbfromparent', 'local_multitenancy'));
-            $mform->addHelpButton('initdbfromparent', 'initdbfromparent', 'local_multitenancy');
-            $mform->setDefault('initdbfromparent', 1);
+            // DB is always initialized from the parent automatically.
             $mform->addElement('advcheckbox', 'copycoursesdata', get_string('copycoursesdata', 'local_multitenancy'));
             $mform->addHelpButton('copycoursesdata', 'copycoursesdata', 'local_multitenancy');
             $mform->setDefault('copycoursesdata', 0);

@@ -36,6 +36,12 @@ require_capability('local/multitenancy:manage', context_system::instance());
 $registrydir = \local_multitenancy\registry_writer::ensure_registry_dir();
 $registryok = $registrydir !== '' && \local_multitenancy\registry_writer::sync();
 
+// Auto-retry tenants that failed with incomplete DB clone (no admin action needed).
+$autoretried = \local_multitenancy\tenant_provisioner::retry_incomplete_failures();
+if ($autoretried > 0) {
+    \core\notification::info(get_string('diagnose_autoretry', 'local_multitenancy', $autoretried));
+}
+
 $PAGE->set_url(new moodle_url('/local/multitenancy/manage.php'));
 $PAGE->set_title(get_string('manage_tenants', 'local_multitenancy'));
 $PAGE->set_heading(get_string('manage_tenants', 'local_multitenancy'));
