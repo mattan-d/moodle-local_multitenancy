@@ -111,21 +111,34 @@ class tenant_provisioner {
 
         $tenant = $DB->get_record('local_multitenancy_tenant', ['id' => $tenantid], '*', MUST_EXIST);
         self::set_status($tenantid, self::STATUS_PROCESSING, null);
+        provision_logger::log_tenant($tenant, 'start', 'Provisioning started (copycourses=' . ($copycourses ? '1' : '0') . ')');
 
         $messages = [];
 
         if (!is_dir($tenant->dataroot) && !make_writable_directory($tenant->dataroot, false)) {
-            return self::fail($tenantid, get_string('datarootautocreatefailed', 'local_multitenancy', $tenant->dataroot));
+            $err = get_string('datarootautocreatefailed', 'local_multitenancy', $tenant->dataroot);
+            provision_logger::log_tenant($tenant, 'dataroot', $err, 'error');
+            return self::fail($tenantid, $err);
         }
+        provision_logger::log_tenant($tenant, 'dataroot', 'OK: ' . $tenant->dataroot);
 
         $schemaerr = self::ensure_tenant_database_exists($tenant);
         if ($schemaerr !== null) {
+            provision_logger::log_tenant($tenant, 'ensure_db', $schemaerr, 'error');
             return self::fail($tenantid, get_string('dbschemaautocreatefailed', 'local_multitenancy', $schemaerr));
         }
         $messages[] = get_string('dbschemaautocreated', 'local_multitenancy', $tenant->dbname);
+        provision_logger::log_tenant($tenant, 'ensure_db', 'Database exists: ' . $tenant->dbname);
 
         // Always initialize the tenant DB from the parent automatically (no admin checkbox).
+        provision_logger::log_tenant($tenant, 'clone', 'Starting DB clone');
         $result = database_provisioner::provision_if_empty($tenant, $copycourses, true);
+        provision_logger::log_tenant(
+            $tenant,
+            'clone',
+            'Result state=' . $result['state'] . ' detail=' . $result['detail'],
+            $result['state'] === 'error' ? 'error' : 'info'
+        );
         if ($result['state'] === 'provisioned') {
             $key = $copycourses ? 'dbprovisioned' : 'dbprovisionednocourses';
             $messages[] = get_string($key, 'local_multitenancy', $tenant->dbname);
@@ -139,26 +152,35 @@ class tenant_provisioner {
 
         // Safety net: if still not installed, wipe once more and retry clone automatically.
         if (!database_provisioner::moodle_is_installed($tenant)) {
+            provision_logger::log_tenant($tenant, 'clone_retry', 'Moodle not installed after first clone — wiping and retrying', 'warn');
             $retry = database_provisioner::provision_if_empty($tenant, $copycourses, true);
+            provision_logger::log_tenant(
+                $tenant,
+                'clone_retry',
+                'Retry state=' . $retry['state'] . ' detail=' . $retry['detail'],
+                $retry['state'] === 'error' ? 'error' : 'info'
+            );
             if ($retry['state'] !== 'provisioned' && $retry['state'] !== 'skipped_notempty') {
                 return self::fail($tenantid, get_string('dbprovisionfailed', 'local_multitenancy', $retry['detail']));
             }
         }
 
         if (!database_provisioner::moodle_is_installed($tenant)) {
-            return self::fail(
-                $tenantid,
-                get_string('dbnotinstalled', 'local_multitenancy', $tenant->dbname)
-            );
+            $err = get_string('dbnotinstalled', 'local_multitenancy', $tenant->dbname);
+            provision_logger::log_tenant($tenant, 'verify', $err, 'error');
+            return self::fail($tenantid, $err);
         }
+        provision_logger::log_tenant($tenant, 'verify', 'config.version present — Moodle install OK');
 
         // Propagate parent site-administration settings and language packs to the tenant,
         // independent of course data.
         $syncresult = admin_sync::sync_tenant($tenant);
         if ($syncresult['state'] === 'synced') {
             $messages[] = get_string('settingssynced', 'local_multitenancy', $syncresult['detail']);
+            provision_logger::log_tenant($tenant, 'admin_sync', $syncresult['detail']);
         } else if ($syncresult['state'] === 'error') {
             $messages[] = get_string('settingssyncfailed', 'local_multitenancy', $syncresult['detail']);
+            provision_logger::log_tenant($tenant, 'admin_sync', $syncresult['detail'], 'error');
         }
 
         // Mark complete in DB before writing registry so gateway sees the ready status.
@@ -167,10 +189,13 @@ class tenant_provisioner {
         gateway_manager::sync();
         if (!registry_writer::sync()) {
             $messages[] = get_string('registrynotwritten', 'local_multitenancy');
+            provision_logger::log_tenant($tenant, 'registry', 'registry write failed', 'warn');
         } else {
             $messages[] = get_string('registryupdated', 'local_multitenancy');
+            provision_logger::log_tenant($tenant, 'registry', 'registry updated');
         }
 
+        provision_logger::log_tenant($tenant, 'done', 'Provisioning complete');
         return ['ok' => true, 'detail' => implode("\n", $messages)];
     }
 
@@ -196,6 +221,17 @@ class tenant_provisioner {
      * @return array{ok:bool, detail:string}
      */
     private static function fail(int $tenantid, string $errormessage): array {
+        global $DB;
+        $shortcode = '';
+        try {
+            $row = $DB->get_record('local_multitenancy_tenant', ['id' => $tenantid], 'shortcode');
+            $shortcode = $row ? (string) $row->shortcode : '';
+        } catch (\Throwable $e) {
+            $shortcode = '';
+        }
+        if ($shortcode !== '') {
+            provision_logger::log($shortcode, 'fail', $errormessage, 'error');
+        }
         self::set_status($tenantid, self::STATUS_FAILED, $errormessage);
         // Keep registry in sync so bootstrap refuses this tenant and manage UI can show the error.
         registry_writer::sync();
@@ -257,21 +293,25 @@ class tenant_provisioner {
                 return 'pg_connect function is unavailable (pgsql extension not loaded)';
             }
             $opts = postgres_helper::dboptions_for_tenant($tenant);
-            $conn = postgres_helper::connect(
+            // CREATE DATABASE can run while connected to the parent Moodle DB.
+            $maint = postgres_helper::connect_maintenance(
                 $dbvalues['dbhost'],
                 $dbvalues['dbuser'],
                 $dbvalues['dbpass'],
-                'postgres',
-                $opts
+                $opts,
+                (string) $CFG->dbname
             );
-            if (!$conn) {
-                return 'DB connect failed: could not connect to postgres maintenance database';
+            if (!$maint['conn']) {
+                return $maint['error'];
             }
+            $conn = $maint['conn'];
+            provision_logger::log_tenant($tenant, 'ensure_db', 'Maintenance connection via DB: ' . $maint['dbname']);
             $dbname = $dbvalues['dbname'];
             $existsres = @pg_query_params($conn, 'SELECT 1 FROM pg_database WHERE datname = $1', [$dbname]);
             if (!$existsres) {
+                $err = pg_last_error($conn);
                 pg_close($conn);
-                return 'Failed checking pg_database for target DB';
+                return 'Failed checking pg_database for target DB: ' . $err;
             }
             if (pg_num_rows($existsres) > 0) {
                 pg_free_result($existsres);
@@ -286,6 +326,7 @@ class tenant_provisioner {
                 return 'CREATE DATABASE failed: ' . $err;
             }
             pg_close($conn);
+            provision_logger::log_tenant($tenant, 'ensure_db', 'Created empty database: ' . $dbname);
             return null;
         }
 

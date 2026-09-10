@@ -381,35 +381,45 @@ class gateway_diagnostic {
             if (!function_exists('pg_connect')) {
                 return 'pgsql extension not loaded';
             }
-            $host = $tenant['dbhost'] ?? 'localhost';
-            $user = $tenant['dbuser'] ?? '';
-            $pass = $tenant['dbpass'] ?? '';
-            $name = $tenant['dbname'] ?? '';
-            $port = null;
-            if (!empty($tenant['dboptions']) && is_array($tenant['dboptions']) && !empty($tenant['dboptions']['dbport'])) {
-                $port = (int) $tenant['dboptions']['dbport'];
+            // Prefer DB row (fresh credentials) when available.
+            $dbtenant = null;
+            if (!empty($tenant['shortcode'])) {
+                $dbtenant = self::load_tenant_record((string) $tenant['shortcode']);
             }
-            $parts = [];
-            if ($host !== '') {
-                $parts[] = "host='" . str_replace("'", "\\'", (string) $host) . "'";
+            if ($dbtenant) {
+                $result = \local_multitenancy\db\postgres_helper::connect_tenant_with_error(
+                    $dbtenant,
+                    (string) $dbtenant->dbname
+                );
+            } else {
+                $host = (string) ($tenant['dbhost'] ?? '');
+                $user = (string) ($tenant['dbuser'] ?? '');
+                $pass = (string) ($tenant['dbpass'] ?? '');
+                $name = (string) ($tenant['dbname'] ?? '');
+                $opts = [];
+                if (!empty($tenant['dboptions']) && is_array($tenant['dboptions'])) {
+                    $opts = $tenant['dboptions'];
+                }
+                $result = \local_multitenancy\db\postgres_helper::connect_with_error($host, $user, $pass, $name, $opts);
             }
-            if (!empty($port)) {
-                $parts[] = 'port=' . $port;
+            if (!$result['conn']) {
+                // Also probe maintenance DBs to explain TEMPLATE failures.
+                $host = (string) ($dbtenant->dbhost ?? $tenant['dbhost'] ?? '');
+                $user = (string) ($dbtenant->dbuser ?? $tenant['dbuser'] ?? '');
+                $pass = (string) ($dbtenant->dbpass ?? $tenant['dbpass'] ?? '');
+                $opts = $dbtenant
+                    ? \local_multitenancy\db\postgres_helper::dboptions_for_tenant($dbtenant)
+                    : (is_array($tenant['dboptions'] ?? null) ? $tenant['dboptions'] : []);
+                $maint = \local_multitenancy\db\postgres_helper::connect_maintenance($host, $user, $pass, $opts, null);
+                $extra = $maint['conn']
+                    ? ('Maintenance OK via ' . $maint['dbname'] . ' — tenant DB may be missing.')
+                    : ('Maintenance also failed: ' . $maint['error']);
+                if ($maint['conn']) {
+                    pg_close($maint['conn']);
+                }
+                return $result['error'] . ' || ' . $extra;
             }
-            if ($user !== '') {
-                $parts[] = "user='" . str_replace("'", "\\'", (string) $user) . "'";
-            }
-            if ($pass !== '') {
-                $parts[] = "password='" . str_replace("'", "\\'", (string) $pass) . "'";
-            }
-            if ($name !== '') {
-                $parts[] = "dbname='" . str_replace("'", "\\'", (string) $name) . "'";
-            }
-            $conn = @pg_connect(implode(' ', $parts));
-            if (!$conn) {
-                return 'could not connect using provided pgsql credentials';
-            }
-            pg_close($conn);
+            pg_close($result['conn']);
             return null;
         }
 

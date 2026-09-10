@@ -82,7 +82,7 @@ local_multitenancy_bootstrap($CFG);
 
 **שחזור מלולאת הפניות:** פתח `/local/multitenancy/leave.php` (מנקה עוגיית דייר) או לחץ «יציאה מהדייר» בעמוד ניהול דיירים.
 
-**דיאגנוזה:** אייקון החיפוש בכל שורה מציג פירוט בעיות ותיקונים (למקרי קצה בלבד). ברוב המקרים אין צורך בהתערבות ידנית.
+**דיאגנוזה:** אייקון החיפוש בכל שורה מציג פירוט בעיות ותיקונים, וגם **לוג הקמה** (`moodledata/multitenancy/logs/{code}.log`) עם שלבי clone/חיבור. ב־PostgreSQL ודאו שלמשתמש ה־DB יש `CONNECT` על `postgres` או `template1` (בנוסף ל־`CREATEDB`) — אחרת `CREATE DATABASE … WITH TEMPLATE` ייכשל.
 
 ---
 

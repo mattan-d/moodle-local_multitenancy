@@ -136,21 +136,27 @@ function local_multitenancy_tenant_db_is_installed(array $tenant): bool {
         if (!function_exists('pg_connect')) {
             return false;
         }
-        $parts = [];
-        if ($dbhost !== '') {
-            $parts[] = "host='" . str_replace("'", "\\'", $dbhost) . "'";
+        $dboptions = [];
+        if (!empty($tenant['dboptions']) && is_array($tenant['dboptions'])) {
+            $dboptions = $tenant['dboptions'];
         }
-        if (!empty($tenant['dboptions']['dbport'])) {
-            $parts[] = 'port=' . (int) $tenant['dboptions']['dbport'];
+        $passescaped = addcslashes($dbpass, "'\\");
+        $userescaped = addcslashes($dbuser, "'\\");
+        $dbnameescaped = addcslashes($dbname, "'\\");
+        $dbsocket = $dboptions['dbsocket'] ?? '';
+        if (!empty($dbsocket) && ($dbhost === 'localhost' || $dbhost === '127.0.0.1')) {
+            $connection = "user='{$userescaped}' password='{$passescaped}' dbname='{$dbnameescaped}'";
+            if (is_string($dbsocket) && strpos($dbsocket, '/') !== false) {
+                $connection .= " host='" . addcslashes($dbsocket, "'\\") . "'";
+            }
+            if (!empty($dboptions['dbport'])) {
+                $connection .= " port='" . (int) $dboptions['dbport'] . "'";
+            }
+        } else {
+            $port = empty($dboptions['dbport']) ? "port='5432'" : ("port='" . (int) $dboptions['dbport'] . "'");
+            $connection = "host='" . addcslashes($dbhost, "'\\") . "' {$port} user='{$userescaped}' password='{$passescaped}' dbname='{$dbnameescaped}'";
         }
-        if ($dbuser !== '') {
-            $parts[] = "user='" . str_replace("'", "\\'", $dbuser) . "'";
-        }
-        if ($dbpass !== '') {
-            $parts[] = "password='" . str_replace("'", "\\'", $dbpass) . "'";
-        }
-        $parts[] = "dbname='" . str_replace("'", "\\'", $dbname) . "'";
-        $conn = @pg_connect(implode(' ', $parts));
+        $conn = @pg_connect($connection);
         if (!$conn) {
             return false;
         }

@@ -137,6 +137,21 @@ foreach ($results as $row) {
 
 echo html_writer::table($table);
 
+// Provisioning step log (auto-written during adhoc task).
+$loglines = \local_multitenancy\provision_logger::read_tail((string) $tenant->shortcode, 100);
+echo $OUTPUT->heading(get_string('diagnose_log_heading', 'local_multitenancy'), 3);
+if ($loglines) {
+    $logfile = \local_multitenancy\provision_logger::log_file_path((string) $tenant->shortcode);
+    echo html_writer::tag('p', get_string('diagnose_log_path', 'local_multitenancy', s($logfile)), ['class' => 'text-muted']);
+    echo html_writer::tag(
+        'pre',
+        s(implode("\n", $loglines)),
+        ['style' => 'direction:ltr;text-align:left;background:#f5f5f5;padding:0.75em;max-height:28em;overflow:auto;']
+    );
+} else {
+    echo $OUTPUT->notification(get_string('diagnose_log_empty', 'local_multitenancy'), 'info');
+}
+
 echo html_writer::start_div('mt-3');
 echo $OUTPUT->single_button($pageurl, get_string('diagnose_rerun', 'local_multitenancy'), 'get');
 echo $OUTPUT->single_button(

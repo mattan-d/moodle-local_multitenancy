@@ -21,6 +21,10 @@ defined('MOODLE_INTERNAL') || die();
 /**
  * PostgreSQL connection helpers for multitenancy.
  *
+ * Connection strings intentionally mirror Moodle core
+ * {@see \pgsql_native_moodle_database::raw_connect()} so tenant clones use the
+ * same host/socket/port/password rules as the parent site.
+ *
  * @package    local_multitenancy
  * @copyright  2026
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
@@ -35,9 +39,13 @@ class postgres_helper {
         global $CFG;
         $opts = [];
         if ($tenant && !empty($tenant->dboptions)) {
-            $decoded = json_decode((string) $tenant->dboptions, true);
-            if (is_array($decoded)) {
-                $opts = $decoded;
+            if (is_array($tenant->dboptions)) {
+                $opts = $tenant->dboptions;
+            } else {
+                $decoded = json_decode((string) $tenant->dboptions, true);
+                if (is_array($decoded)) {
+                    $opts = $decoded;
+                }
             }
         }
         if (!$opts && !empty($CFG->dboptions) && is_array($CFG->dboptions)) {
@@ -55,6 +63,8 @@ class postgres_helper {
     }
 
     /**
+     * Build a libpq connection string the same way Moodle core does.
+     *
      * @param string $host
      * @param string $user
      * @param string $pass
@@ -63,24 +73,50 @@ class postgres_helper {
      * @return string
      */
     public static function build_conninfo(string $host, string $user, string $pass, string $dbname, array $dboptions = []): string {
-        $parts = [];
-        if ($host !== '') {
-            $parts[] = "host='" . str_replace("'", "\\'", $host) . "'";
+        $passescaped = addcslashes($pass, "'\\");
+        $userescaped = addcslashes($user, "'\\");
+        $dbnameescaped = addcslashes($dbname, "'\\");
+        $dbsocket = $dboptions['dbsocket'] ?? '';
+
+        // Match Moodle: unix socket when dbsocket is set and host is localhost/127.0.0.1.
+        if (!empty($dbsocket) && ($host === 'localhost' || $host === '127.0.0.1')) {
+            $connection = "user='{$userescaped}' password='{$passescaped}' dbname='{$dbnameescaped}'";
+            if (is_string($dbsocket) && strpos($dbsocket, '/') !== false) {
+                $connection .= " host='" . addcslashes($dbsocket, "'\\") . "'";
+            }
+            if (!empty($dboptions['dbport'])) {
+                $connection .= " port='" . (int) $dboptions['dbport'] . "'";
+            }
+        } else {
+            $port = '';
+            if ($dbname !== '') {
+                if (empty($dboptions['dbport'])) {
+                    $port = "port='5432'";
+                } else {
+                    $port = "port='" . (int) $dboptions['dbport'] . "'";
+                }
+            }
+            $hostescaped = addcslashes($host, "'\\");
+            $connection = "host='{$hostescaped}' {$port} user='{$userescaped}' password='{$passescaped}' dbname='{$dbnameescaped}'";
         }
-        if (!empty($dboptions['dbport'])) {
-            $parts[] = 'port=' . (int) $dboptions['dbport'];
+
+        if (!empty($dboptions['connecttimeout'])) {
+            $connection .= ' connect_timeout=' . (int) $dboptions['connecttimeout'];
         }
-        if (!empty($dboptions['dbsocket'])) {
-            $parts[] = "host='" . str_replace("'", "\\'", (string) $dboptions['dbsocket']) . "'";
+
+        if (empty($dboptions['dbhandlesoptions'])) {
+            $options = ['--client_encoding=utf8', '--standard_conforming_strings=on'];
+            if (!empty($dboptions['dbschema'])) {
+                $options[] = '-c search_path=' . addcslashes((string) $dboptions['dbschema'], "'\\");
+            }
+            $connection .= " options='" . implode(' ', $options) . "'";
         }
-        if ($user !== '') {
-            $parts[] = "user='" . str_replace("'", "\\'", $user) . "'";
+
+        if (!empty($dboptions['ssl'])) {
+            $connection .= ' sslmode=' . preg_replace('/[^a-z]/', '', (string) $dboptions['ssl']);
         }
-        if ($pass !== '') {
-            $parts[] = "password='" . str_replace("'", "\\'", $pass) . "'";
-        }
-        $parts[] = "dbname='" . str_replace("'", "\\'", $dbname) . "'";
-        return implode(' ', $parts);
+
+        return trim(preg_replace('/\s+/', ' ', $connection));
     }
 
     /**
@@ -92,10 +128,121 @@ class postgres_helper {
      * @return resource|false
      */
     public static function connect(string $host, string $user, string $pass, string $dbname, array $dboptions = []) {
+        $result = self::connect_with_error($host, $user, $pass, $dbname, $dboptions);
+        return $result['conn'];
+    }
+
+    /**
+     * Connect and return a human-readable error when it fails.
+     *
+     * @param string $host
+     * @param string $user
+     * @param string $pass
+     * @param string $dbname
+     * @param array $dboptions
+     * @return array{conn: resource|false, error: string, conninfo_safe: string}
+     */
+    public static function connect_with_error(
+        string $host,
+        string $user,
+        string $pass,
+        string $dbname,
+        array $dboptions = []
+    ): array {
         if (!function_exists('pg_connect')) {
-            return false;
+            return [
+                'conn' => false,
+                'error' => 'pgsql PHP extension not loaded',
+                'conninfo_safe' => '',
+            ];
         }
-        return @pg_connect(self::build_conninfo($host, $user, $pass, $dbname, $dboptions));
+
+        $conninfo = self::build_conninfo($host, $user, $pass, $dbname, $dboptions);
+        $safe = self::redact_conninfo($conninfo);
+
+        ob_start();
+        $conn = false;
+        $dberr = '';
+        try {
+            $conn = @pg_connect($conninfo, PGSQL_CONNECT_FORCE_NEW);
+            $dberr = trim((string) ob_get_contents());
+        } catch (\Throwable $e) {
+            $dberr = $e->getMessage();
+        }
+        ob_end_clean();
+
+        $status = $conn ? pg_connection_status($conn) : false;
+        if ($status === false || $status === PGSQL_CONNECTION_BAD) {
+            if (is_resource($conn) || (is_object($conn) && $conn instanceof \PgSql\Connection)) {
+                @pg_close($conn);
+            }
+            $err = $dberr !== '' ? $dberr : 'pg_connect returned false (check host/socket/port/user/password/dbname)';
+            return [
+                'conn' => false,
+                'error' => $err . ' | conn=' . $safe,
+                'conninfo_safe' => $safe,
+            ];
+        }
+
+        return [
+            'conn' => $conn,
+            'error' => '',
+            'conninfo_safe' => $safe,
+        ];
+    }
+
+    /**
+     * Connect for CREATE/DROP DATABASE. Prefers maintenance DBs the moodle role can access.
+     *
+     * Many locked-down installs grant CREATEDB but deny CONNECT on database "postgres".
+     *
+     * @param string $host
+     * @param string $user
+     * @param string $pass
+     * @param array $dboptions
+     * @param string|null $preferdbname Optional first candidate (e.g. parent db for non-TEMPLATE ops).
+     * @return array{conn: resource|false, error: string, dbname: string}
+     */
+    public static function connect_maintenance(
+        string $host,
+        string $user,
+        string $pass,
+        array $dboptions = [],
+        ?string $preferdbname = null
+    ): array {
+        global $CFG;
+
+        $candidates = [];
+        if ($preferdbname !== null && $preferdbname !== '') {
+            $candidates[] = $preferdbname;
+        }
+        $candidates[] = 'postgres';
+        $candidates[] = 'template1';
+        if (!empty($CFG->dbname) && !in_array((string) $CFG->dbname, $candidates, true)) {
+            $candidates[] = (string) $CFG->dbname;
+        }
+        $candidates = array_values(array_unique($candidates));
+
+        $errors = [];
+        foreach ($candidates as $dbname) {
+            $result = self::connect_with_error($host, $user, $pass, $dbname, $dboptions);
+            if ($result['conn']) {
+                return [
+                    'conn' => $result['conn'],
+                    'error' => '',
+                    'dbname' => $dbname,
+                ];
+            }
+            $errors[] = $dbname . ': ' . $result['error'];
+        }
+
+        return [
+            'conn' => false,
+            'error' => 'Could not open a PostgreSQL maintenance connection. Tried: ' .
+                implode(' || ', $errors) .
+                '. Grant CONNECT on database "postgres" (or template1) to the Moodle DB user, or ensure pg_dump/psql works.',
+            'dbname' => '',
+        ];
     }
 
     /**
@@ -104,7 +251,17 @@ class postgres_helper {
      * @return resource|false
      */
     public static function connect_tenant(\stdClass $tenant, string $dbname) {
-        return self::connect(
+        $result = self::connect_tenant_with_error($tenant, $dbname);
+        return $result['conn'];
+    }
+
+    /**
+     * @param \stdClass $tenant
+     * @param string $dbname
+     * @return array{conn: resource|false, error: string, conninfo_safe: string}
+     */
+    public static function connect_tenant_with_error(\stdClass $tenant, string $dbname): array {
+        return self::connect_with_error(
             (string) ($tenant->dbhost ?? ''),
             (string) ($tenant->dbuser ?? ''),
             (string) ($tenant->dbpass ?? ''),
@@ -125,6 +282,14 @@ class postgres_helper {
             (string) $CFG->dbname,
             self::dboptions_for_parent()
         );
+    }
+
+    /**
+     * @param string $conninfo
+     * @return string
+     */
+    public static function redact_conninfo(string $conninfo): string {
+        return preg_replace("/password='[^']*'/", "password='***'", $conninfo) ?? $conninfo;
     }
 
     /**
@@ -157,7 +322,7 @@ class postgres_helper {
     }
 
     /**
-     * CLI args for pg_dump/psql with port support.
+     * CLI args for pg_dump/psql with port/socket support aligned with Moodle.
      *
      * @param string $host
      * @param string $user
@@ -167,11 +332,22 @@ class postgres_helper {
      */
     public static function build_cli_args(string $host, string $user, string $dbname, array $dboptions = []): array {
         $args = [];
-        if ($host !== '') {
+        $dbsocket = $dboptions['dbsocket'] ?? '';
+        if (!empty($dbsocket) && ($host === 'localhost' || $host === '127.0.0.1')) {
+            if (is_string($dbsocket) && strpos($dbsocket, '/') !== false) {
+                $args[] = escapeshellarg('--host=' . $dbsocket);
+            }
+            // else: default unix socket — omit --host
+        } else if ($host !== '') {
             $args[] = escapeshellarg('--host=' . $host);
         }
         if (!empty($dboptions['dbport'])) {
             $args[] = escapeshellarg('--port=' . (int) $dboptions['dbport']);
+        } else if (empty($dbsocket) || ($host !== 'localhost' && $host !== '127.0.0.1')) {
+            // TCP default matches Moodle raw_connect.
+            if ($host !== '' && (empty($dbsocket) || strpos((string) $dbsocket, '/') === false)) {
+                $args[] = escapeshellarg('--port=5432');
+            }
         }
         if ($user !== '') {
             $args[] = escapeshellarg('--username=' . $user);

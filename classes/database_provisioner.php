@@ -83,22 +83,29 @@ class database_provisioner {
 
         // PostgreSQL on the same server: filesystem-level clone, no pg_dump required.
         if (in_array($dbtype, self::POSTGRES_FAMILY, true) && self::is_same_pg_server($tenant)) {
+            provision_logger::log_tenant($tenant, 'clone', 'Trying CREATE DATABASE WITH TEMPLATE');
             $templateresult = self::clone_via_pg_template($tenant, $tenantdbname);
             if ($templateresult['ok']) {
+                provision_logger::log_tenant($tenant, 'clone', 'TEMPLATE clone OK');
                 return self::finalize_clone($tenant, $tenantdbname, $copycourses);
             }
+            provision_logger::log_tenant($tenant, 'clone', 'TEMPLATE failed: ' . $templateresult['detail'], 'warn');
             $errors[] = 'TEMPLATE: ' . $templateresult['detail'];
         }
 
         // CLI dump tools (with common-path discovery).
         if (self::can_clone_via_cli($dbtype)) {
+            provision_logger::log_tenant($tenant, 'clone', 'Trying CLI dump/restore');
             $cliresult = self::clone_via_cli($tenant, $tenantdbname);
             if ($cliresult['ok']) {
+                provision_logger::log_tenant($tenant, 'clone', 'CLI clone OK');
                 return self::finalize_clone($tenant, $tenantdbname, $copycourses);
             }
+            provision_logger::log_tenant($tenant, 'clone', 'CLI failed: ' . $cliresult['detail'], 'warn');
             $errors[] = 'CLI: ' . $cliresult['detail'];
         } else if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
             $errors[] = 'CLI: pg_dump/psql not found in PATH or common locations';
+            provision_logger::log_tenant($tenant, 'clone', 'pg_dump/psql not found', 'warn');
         }
 
         // MySQL-family PHP fallback (SHOW CREATE TABLE is reliable).
@@ -190,16 +197,20 @@ class database_provisioner {
         }
 
         $opts = postgres_helper::dboptions_for_tenant($tenant);
-        $conn = postgres_helper::connect(
+        // TEMPLATE cannot run while connected to the template (parent) DB — need postgres/template1.
+        $maint = postgres_helper::connect_maintenance(
             (string) ($tenant->dbhost ?? ''),
             (string) ($tenant->dbuser ?? ''),
             (string) ($tenant->dbpass ?? ''),
-            'postgres',
-            $opts
+            $opts,
+            null
         );
-        if (!$conn) {
-            return ['ok' => false, 'detail' => 'Could not connect to postgres maintenance DB for TEMPLATE clone'];
+        if (!$maint['conn']) {
+            return ['ok' => false, 'detail' => $maint['error']];
         }
+        $conn = $maint['conn'];
+        provision_logger::log_tenant($tenant, 'pg_template', 'Connected to maintenance DB: ' . $maint['dbname']);
+
 
         $parentdb = (string) $CFG->dbname;
         $parentq = postgres_helper::quote_ident($parentdb);
