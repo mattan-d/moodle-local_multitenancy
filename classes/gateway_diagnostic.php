@@ -280,18 +280,42 @@ class gateway_diagnostic {
             }
 
             $cliok = self::cli_tools_available((string) ($dbtenant->dbtype ?? ''));
-            if (!$cliok && in_array((string) ($dbtenant->dbtype ?? ''), ['pgsql'], true)) {
-                $out[] = [
-                    'level' => self::LEVEL_WARN,
-                    'key' => 'pgdumpmissing',
-                    'detail' => 'pg_dump/psql',
-                    'fix' => 'fix_pgdump',
-                ];
+            if (in_array((string) ($dbtenant->dbtype ?? ''), ['pgsql'], true)) {
+                global $CFG;
+                $servermajor = \local_multitenancy\db\postgres_helper::server_major_version(
+                    (string) $CFG->dbhost,
+                    (string) $CFG->dbuser,
+                    (string) $CFG->dbpass,
+                    (string) $CFG->dbname,
+                    \local_multitenancy\db\postgres_helper::dboptions_for_parent()
+                );
+                $tools = \local_multitenancy\db\postgres_helper::resolve_compatible_cli_tools($servermajor);
+                if ($tools['pg_dump'] !== null && $tools['psql'] !== null) {
+                    $out[] = [
+                        'level' => self::LEVEL_OK,
+                        'key' => 'pgcliversionok',
+                        'detail' => $tools['detail'],
+                    ];
+                } else {
+                    $out[] = [
+                        'level' => self::LEVEL_ERROR,
+                        'key' => 'pgcliversionmismatch',
+                        'detail' => $tools['detail'] . ($servermajor ? ' (need client >= ' . $servermajor . ')' : ''),
+                        'fix' => 'fix_pgversion',
+                    ];
+                }
             } else if ($cliok) {
                 $out[] = [
                     'level' => self::LEVEL_OK,
                     'key' => 'clitoolsok',
                     'detail' => (string) ($dbtenant->dbtype ?? ''),
+                ];
+            } else if (!$cliok && in_array((string) ($dbtenant->dbtype ?? ''), ['pgsql'], true)) {
+                $out[] = [
+                    'level' => self::LEVEL_WARN,
+                    'key' => 'pgdumpmissing',
+                    'detail' => 'pg_dump/psql',
+                    'fix' => 'fix_pgdump',
                 ];
             }
         } else {

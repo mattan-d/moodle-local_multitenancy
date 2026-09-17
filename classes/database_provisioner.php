@@ -299,6 +299,32 @@ class database_provisioner {
 
         $dbtype = (string) ($tenant->dbtype ?? '');
         if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
+            $servermajor = postgres_helper::server_major_version(
+                (string) $CFG->dbhost,
+                (string) $CFG->dbuser,
+                (string) $CFG->dbpass,
+                (string) $CFG->dbname,
+                postgres_helper::dboptions_for_parent()
+            );
+            $tools = postgres_helper::resolve_compatible_cli_tools($servermajor);
+            $pgdump = $tools['pg_dump'];
+            $psql = $tools['psql'];
+            if ($pgdump === null || $psql === null) {
+                $hint = $servermajor !== null
+                    ? 'Need pg_dump/psql major >= ' . $servermajor . ' (server is PostgreSQL ' . $servermajor . '.x). '
+                    : '';
+                return [
+                    'ok' => false,
+                    'detail' => $hint . 'Compatible tools not found. ' . $tools['detail'] .
+                        '. Install postgresql-client matching the server (e.g. postgresql-client-15).',
+                ];
+            }
+            provision_logger::log_tenant(
+                $tenant,
+                'clone_cli',
+                'Using ' . $tools['detail']
+            );
+
             $sourceargs = postgres_helper::build_cli_args(
                 (string) $CFG->dbhost,
                 (string) $CFG->dbuser,
@@ -313,11 +339,6 @@ class database_provisioner {
             );
             $sourceenv = self::build_pg_password_env((string) $CFG->dbpass);
             $targetenv = self::build_pg_password_env((string) ($tenant->dbpass ?? ''));
-            $pgdump = self::resolve_command('pg_dump');
-            $psql = self::resolve_command('psql');
-            if ($pgdump === null || $psql === null) {
-                return ['ok' => false, 'detail' => 'pg_dump/psql not found'];
-            }
             $cmd = trim($sourceenv . ' ' . escapeshellarg($pgdump) . ' --clean --if-exists --no-owner --no-privileges ' .
                 implode(' ', $sourceargs)) .
                 ' | ' .
@@ -326,8 +347,12 @@ class database_provisioner {
             $exitcode = 0;
             exec($cmd . ' 2>&1', $output, $exitcode);
             if ($exitcode !== 0) {
-                $detail = trim(implode("\n", array_slice($output, 0, 5)));
-                return ['ok' => false, 'detail' => ($detail !== '' ? $detail : 'pg_dump/psql command failed')];
+                $detail = trim(implode("\n", array_slice($output, 0, 8)));
+                return [
+                    'ok' => false,
+                    'detail' => ($detail !== '' ? $detail : 'pg_dump/psql command failed') .
+                        ' | tools: ' . $tools['detail'],
+                ];
             }
             return ['ok' => true, 'detail' => ''];
         }
@@ -1158,7 +1183,7 @@ class database_provisioner {
     }
 
     /**
-     * Resolve an executable from PATH and common install locations (no manual PATH setup).
+     * Resolve a generic executable (MySQL tools). Prefer PATH then common locations.
      *
      * @param string $cmd
      * @return string|null Absolute path or null.
@@ -1179,14 +1204,7 @@ class database_provisioner {
             '/usr/local/bin/' . $cmd,
             '/bin/' . $cmd,
             '/opt/homebrew/bin/' . $cmd,
-            '/usr/lib/postgresql/bin/' . $cmd,
         ]);
-        foreach (glob('/usr/pgsql-*/bin/' . $cmd) ?: [] as $path) {
-            $candidates[] = $path;
-        }
-        foreach (glob('/usr/lib/postgresql/*/bin/' . $cmd) ?: [] as $path) {
-            $candidates[] = $path;
-        }
 
         foreach ($candidates as $path) {
             if (is_string($path) && $path !== '' && is_executable($path)) {
@@ -1211,8 +1229,17 @@ class database_provisioner {
      * @return bool
      */
     private static function can_clone_via_cli(string $dbtype): bool {
+        global $CFG;
         if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
-            return self::has_command('pg_dump') && self::has_command('psql');
+            $servermajor = postgres_helper::server_major_version(
+                (string) $CFG->dbhost,
+                (string) $CFG->dbuser,
+                (string) $CFG->dbpass,
+                (string) $CFG->dbname,
+                postgres_helper::dboptions_for_parent()
+            );
+            $tools = postgres_helper::resolve_compatible_cli_tools($servermajor);
+            return $tools['pg_dump'] !== null && $tools['psql'] !== null;
         }
         return self::has_command('mysqldump') && self::has_command('mysql');
     }

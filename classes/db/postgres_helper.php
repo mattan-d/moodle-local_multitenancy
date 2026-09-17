@@ -356,4 +356,192 @@ class postgres_helper {
         $args[] = escapeshellarg('--no-password');
         return $args;
     }
+
+    /**
+     * Major version of the PostgreSQL server (e.g. 15 for 15.7), or null on failure.
+     *
+     * @param string $host
+     * @param string $user
+     * @param string $pass
+     * @param string $dbname
+     * @param array $dboptions
+     * @return int|null
+     */
+    public static function server_major_version(
+        string $host,
+        string $user,
+        string $pass,
+        string $dbname,
+        array $dboptions = []
+    ): ?int {
+        $result = self::connect_with_error($host, $user, $pass, $dbname, $dboptions);
+        if (!$result['conn']) {
+            return null;
+        }
+        $conn = $result['conn'];
+        $major = null;
+        $res = @pg_query($conn, 'SHOW server_version_num');
+        if ($res && ($row = pg_fetch_row($res)) && isset($row[0])) {
+            // 150007 => 15
+            $major = (int) floor(((int) $row[0]) / 10000);
+        }
+        if ($res) {
+            pg_free_result($res);
+        }
+        pg_close($conn);
+        return ($major !== null && $major > 0) ? $major : null;
+    }
+
+    /**
+     * Resolve pg_dump/psql binaries compatible with the server major version.
+     * Older clients (e.g. 13.x) cannot dump a newer server (e.g. 15.x).
+     *
+     * @param int|null $servermajor Required minimum client major; null = any found.
+     * @return array{pg_dump:?string, psql:?string, pg_dump_version:?string, psql_version:?string, detail:string}
+     */
+    public static function resolve_compatible_cli_tools(?int $servermajor = null): array {
+        $pgdump = self::resolve_pg_binary('pg_dump', $servermajor);
+        $psql = self::resolve_pg_binary('psql', $servermajor);
+
+        $detailparts = [];
+        if ($servermajor !== null) {
+            $detailparts[] = 'server_major=' . $servermajor;
+        }
+        $detailparts[] = 'pg_dump=' . ($pgdump['path'] ?? 'none') .
+            ($pgdump['version'] ? ' (' . $pgdump['version'] . ')' : '');
+        $detailparts[] = 'psql=' . ($psql['path'] ?? 'none') .
+            ($psql['version'] ? ' (' . $psql['version'] . ')' : '');
+
+        return [
+            'pg_dump' => $pgdump['path'],
+            'psql' => $psql['path'],
+            'pg_dump_version' => $pgdump['version'],
+            'psql_version' => $psql['version'],
+            'detail' => implode('; ', $detailparts),
+        ];
+    }
+
+    /**
+     * @param string $cmd pg_dump|psql
+     * @param int|null $servermajor
+     * @return array{path:?string, version:?string, major:?int}
+     */
+    public static function resolve_pg_binary(string $cmd, ?int $servermajor = null): array {
+        $candidates = self::list_pg_binary_candidates($cmd);
+        $scored = [];
+        foreach ($candidates as $path) {
+            $ver = self::parse_pg_client_version($path);
+            if ($ver === null) {
+                continue;
+            }
+            // Client major must be >= server major (pg_dump 13 cannot dump PG 15).
+            if ($servermajor !== null && $ver['major'] < $servermajor) {
+                continue;
+            }
+            // Prefer exact major match, then closest higher major, then PATH order.
+            $score = 0;
+            if ($servermajor !== null) {
+                $score = 1000 - abs($ver['major'] - $servermajor);
+                if ($ver['major'] === $servermajor) {
+                    $score += 100;
+                }
+            }
+            $scored[] = [
+                'path' => $path,
+                'version' => $ver['label'],
+                'major' => $ver['major'],
+                'score' => $score,
+            ];
+        }
+
+        if (!$scored) {
+            return ['path' => null, 'version' => null, 'major' => null];
+        }
+
+        usort($scored, static function (array $a, array $b): int {
+            return $b['score'] <=> $a['score'];
+        });
+        $best = $scored[0];
+        return [
+            'path' => $best['path'],
+            'version' => $best['version'],
+            'major' => $best['major'],
+        ];
+    }
+
+    /**
+     * @param string $cmd
+     * @return string[] Absolute executable paths (unique, existing).
+     */
+    public static function list_pg_binary_candidates(string $cmd): array {
+        $candidates = [];
+
+        // Versioned installs first (more likely to match the server).
+        foreach ([16, 15, 14, 13, 12] as $maj) {
+            $candidates[] = '/usr/lib/postgresql/' . $maj . '/bin/' . $cmd;
+            $candidates[] = '/usr/pgsql-' . $maj . '/bin/' . $cmd;
+            $candidates[] = '/usr/pgsql-' . $maj . '.0/bin/' . $cmd;
+            $candidates[] = '/opt/postgresql/' . $maj . '/bin/' . $cmd;
+        }
+        foreach (glob('/usr/lib/postgresql/*/bin/' . $cmd) ?: [] as $path) {
+            $candidates[] = $path;
+        }
+        foreach (glob('/usr/pgsql-*/bin/' . $cmd) ?: [] as $path) {
+            $candidates[] = $path;
+        }
+        foreach (glob('/opt/homebrew/opt/postgresql@*/bin/' . $cmd) ?: [] as $path) {
+            $candidates[] = $path;
+        }
+        foreach (glob('/usr/local/opt/postgresql@*/bin/' . $cmd) ?: [] as $path) {
+            $candidates[] = $path;
+        }
+
+        $which = trim((string) shell_exec('command -v ' . escapeshellarg($cmd) . ' 2>/dev/null'));
+        if ($which !== '') {
+            $candidates[] = $which;
+        }
+        $candidates = array_merge($candidates, [
+            '/usr/bin/' . $cmd,
+            '/usr/local/bin/' . $cmd,
+            '/bin/' . $cmd,
+            '/opt/homebrew/bin/' . $cmd,
+            '/usr/lib/postgresql/bin/' . $cmd,
+        ]);
+
+        $out = [];
+        $seen = [];
+        foreach ($candidates as $path) {
+            if (!is_string($path) || $path === '' || isset($seen[$path])) {
+                continue;
+            }
+            if (!is_executable($path)) {
+                continue;
+            }
+            $seen[$path] = true;
+            $out[] = $path;
+        }
+        return $out;
+    }
+
+    /**
+     * @param string $path
+     * @return array{major:int, label:string}|null
+     */
+    public static function parse_pg_client_version(string $path): ?array {
+        $out = [];
+        $code = 0;
+        exec(escapeshellarg($path) . ' --version 2>&1', $out, $code);
+        $text = trim(implode(' ', $out));
+        if ($text === '') {
+            return null;
+        }
+        // "pg_dump (PostgreSQL) 15.7" / "psql (PostgreSQL) 13.11"
+        if (!preg_match('/(\d+)\.(\d+)/', $text, $m)) {
+            return null;
+        }
+        return [
+            'major' => (int) $m[1],
+            'label' => $m[1] . '.' . $m[2],
+        ];
+    }
 }

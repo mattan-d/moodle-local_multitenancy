@@ -82,7 +82,9 @@ local_multitenancy_bootstrap($CFG);
 
 **שחזור מלולאת הפניות:** פתח `/local/multitenancy/leave.php` (מנקה עוגיית דייר) או לחץ «יציאה מהדייר» בעמוד ניהול דיירים.
 
-**דיאגנוזה:** אייקון החיפוש בכל שורה מציג פירוט בעיות ותיקונים, וגם **לוג הקמה** (`moodledata/multitenancy/logs/{code}.log`) עם שלבי clone/חיבור. ב־PostgreSQL ודאו שלמשתמש ה־DB יש `CONNECT` על `postgres` או `template1` (בנוסף ל־`CREATEDB`) — אחרת `CREATE DATABASE … WITH TEMPLATE` ייכשל.
+**דיאגנוזה:** אייקון החיפוש בכל שורה מציג פירוט בעיות ותיקונים, וגם **לוג הקמה** (`moodledata/multitenancy/logs/{code}.log`) עם שלבי clone/חיבור. ב־PostgreSQL:
+- ל־TEMPLATE נדרש שהמשתמש יהיה **בעלים** של מסד האב (או superuser) — `CREATEDB` לבד לא מספיק ל־`WITH TEMPLATE`.
+- ל־`pg_dump` חובה **גרסת לקוח ≥ גרסת השרת** (למשל שרת 15.7 דורש `pg_dump` 15.x, לא 13.x). התוסף בוחר אוטומטית את הבינארי התואם מנתיבים נפוצים (`/usr/lib/postgresql/15/bin/` וכו').
 
 ---
 
@@ -190,7 +192,7 @@ php local/multitenancy/cli/diagnose_gateway.php --shortcode=CODE
 | `too_many_redirects` / לולאת הפניות | `/local/multitenancy/leave.php`, ואז המתינו לניסיון הקמה אוטומטי מחדש (או דיאגנוזה). |
 | מסך התקנת Moodle ב־gateway | Clone לא הושלם — המערכת אמורה לתקן אוטומטית; אל תריץ install ידנית. |
 | דף לבן | דיאגנוזה בממשק או `diagnose_gateway.php`, לוגי PHP/שרת, HTTPS ועוגיות `Secure`. |
-| אתחול DB נכשל | הרשאות DB ל־CREATE DATABASE / TEMPLATE; ב־pgsql מרוחק ייתכן צורך ב־pg_dump. ניסיון חוזר אוטומטי רץ מניהול דיירים / cron. |
+| אתחול DB נכשל | הרשאות DB; ב־pgsql: בעלות על מסד האב ל־TEMPLATE, או `pg_dump` בגרסה ≥ לשרת (לא 13 מול 15). לוג בדיאגנוזה. |
 
 ---
 
