@@ -298,9 +298,9 @@ class gateway_diagnostic {
                     ];
                 } else {
                     $out[] = [
-                        'level' => self::LEVEL_ERROR,
+                        'level' => self::LEVEL_WARN,
                         'key' => 'pgcliversionmismatch',
-                        'detail' => $tools['detail'] . ($servermajor ? ' (need client >= ' . $servermajor . ')' : ''),
+                        'detail' => $tools['detail'] . ($servermajor ? ' (optional client >= ' . $servermajor . ')' : ''),
                         'fix' => 'fix_pgversion',
                     ];
                 }

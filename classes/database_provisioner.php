@@ -81,20 +81,37 @@ class database_provisioner {
 
         $errors = [];
 
-        // PostgreSQL on the same server: filesystem-level clone, no pg_dump required.
+        $hascli = self::can_clone_via_cli($dbtype);
+
+        // TEMPLATE needs ownership of the parent DB. If it fails after DROP, the empty
+        // tenant DB disappears — always restore an empty DB before falling back.
         if (in_array($dbtype, self::POSTGRES_FAMILY, true) && self::is_same_pg_server($tenant)) {
-            provision_logger::log_tenant($tenant, 'clone', 'Trying CREATE DATABASE WITH TEMPLATE');
-            $templateresult = self::clone_via_pg_template($tenant, $tenantdbname);
-            if ($templateresult['ok']) {
-                provision_logger::log_tenant($tenant, 'clone', 'TEMPLATE clone OK');
-                return self::finalize_clone($tenant, $tenantdbname, $copycourses);
+            if (self::pg_can_use_template($tenant)) {
+                provision_logger::log_tenant($tenant, 'clone', 'Trying CREATE DATABASE WITH TEMPLATE');
+                $templateresult = self::clone_via_pg_template($tenant, $tenantdbname);
+                if ($templateresult['ok']) {
+                    provision_logger::log_tenant($tenant, 'clone', 'TEMPLATE clone OK');
+                    return self::finalize_clone($tenant, $tenantdbname, $copycourses);
+                }
+                provision_logger::log_tenant($tenant, 'clone', 'TEMPLATE failed: ' . $templateresult['detail'], 'warn');
+                $errors[] = 'TEMPLATE: ' . $templateresult['detail'];
+            } else {
+                provision_logger::log_tenant(
+                    $tenant,
+                    'clone',
+                    'Skipping TEMPLATE (DB role is not owner/superuser of parent DB) — using PHP/CLI clone',
+                    'warn'
+                );
             }
-            provision_logger::log_tenant($tenant, 'clone', 'TEMPLATE failed: ' . $templateresult['detail'], 'warn');
-            $errors[] = 'TEMPLATE: ' . $templateresult['detail'];
+            // TEMPLATE (or a failed attempt) may have removed the empty tenant DB.
+            $ensure = self::ensure_empty_tenant_database($tenant, $tenantdbname);
+            if ($ensure['ok'] !== true) {
+                return ['state' => 'error', 'detail' => 'Could not recreate empty tenant DB after TEMPLATE: ' . $ensure['detail']];
+            }
         }
 
-        // CLI dump tools (with common-path discovery).
-        if (self::can_clone_via_cli($dbtype)) {
+        // CLI dump tools (optional — preferred when a matching client exists).
+        if ($hascli) {
             provision_logger::log_tenant($tenant, 'clone', 'Trying CLI dump/restore');
             $cliresult = self::clone_via_cli($tenant, $tenantdbname);
             if ($cliresult['ok']) {
@@ -103,22 +120,42 @@ class database_provisioner {
             }
             provision_logger::log_tenant($tenant, 'clone', 'CLI failed: ' . $cliresult['detail'], 'warn');
             $errors[] = 'CLI: ' . $cliresult['detail'];
+            // Ensure empty DB still exists for PHP fallback.
+            if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
+                self::ensure_empty_tenant_database($tenant, $tenantdbname);
+            }
         } else if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
-            $errors[] = 'CLI: pg_dump/psql not found in PATH or common locations';
-            provision_logger::log_tenant($tenant, 'clone', 'pg_dump/psql not found', 'warn');
+            provision_logger::log_tenant(
+                $tenant,
+                'clone',
+                'No compatible pg_dump/psql in this environment — using PHP clone (no client install required)',
+                'info'
+            );
         }
 
-        // MySQL-family PHP fallback (SHOW CREATE TABLE is reliable).
-        if (in_array($dbtype, self::MYSQL_FAMILY, true)) {
+        // PHP clone: works with only the pgsql PHP extension (typical in Moodle containers).
+        if (in_array($dbtype, self::MYSQL_FAMILY, true) || in_array($dbtype, self::POSTGRES_FAMILY, true)) {
+            if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
+                $ensure = self::ensure_empty_tenant_database($tenant, $tenantdbname);
+                if ($ensure['ok'] !== true) {
+                    return ['state' => 'error', 'detail' => 'Tenant DB missing before PHP clone: ' . $ensure['detail']];
+                }
+            }
+            provision_logger::log_tenant($tenant, 'clone', 'Trying PHP clone');
             $phpresult = self::clone_via_php($tenant, $tenantdbname, $copycourses);
             if ($phpresult['ok']) {
-                // copycourses already applied inside PHP clone filter.
+                provision_logger::log_tenant($tenant, 'clone', 'PHP clone OK');
+                if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
+                    // Course filtering is applied during PHP PG row copy; still finalize admin reset.
+                    return self::finalize_clone($tenant, $tenantdbname, true);
+                }
                 $adminreset = self::reset_to_initial_admin($tenant, $tenantdbname);
                 if ($adminreset['state'] !== 'ok') {
                     return ['state' => 'error', 'detail' => $adminreset['detail']];
                 }
                 return self::verify_after_clone($tenant, $tenantdbname);
             }
+            provision_logger::log_tenant($tenant, 'clone', 'PHP failed: ' . $phpresult['detail'], 'error');
             $errors[] = 'PHP: ' . $phpresult['detail'];
         }
 
@@ -249,6 +286,8 @@ class database_provisioner {
         $sql = 'CREATE DATABASE ' . $tenantq . ' WITH TEMPLATE ' . $parentq;
         if (!@pg_query($conn, $sql)) {
             $err = pg_last_error($conn);
+            // Recreate empty tenant DB so PHP/CLI fallback can still run.
+            @pg_query($conn, 'CREATE DATABASE ' . $tenantq);
             pg_close($conn);
             self::reconnect_parent_moodle_db();
             return ['ok' => false, 'detail' => 'CREATE DATABASE WITH TEMPLATE failed: ' . $err];
@@ -256,6 +295,109 @@ class database_provisioner {
         pg_close($conn);
         self::reconnect_parent_moodle_db();
         return ['ok' => true, 'detail' => ''];
+    }
+
+    /**
+     * Whether the Moodle DB role can CREATE DATABASE … WITH TEMPLATE of the parent DB.
+     * Requires ownership of the parent database (or superuser) — CREATEDB alone is not enough.
+     *
+     * @param \stdClass $tenant
+     * @return bool
+     */
+    private static function pg_can_use_template(\stdClass $tenant): bool {
+        global $CFG;
+        if (!function_exists('pg_connect')) {
+            return false;
+        }
+        $opts = postgres_helper::dboptions_for_tenant($tenant);
+        $result = postgres_helper::connect_with_error(
+            (string) ($tenant->dbhost ?? ''),
+            (string) ($tenant->dbuser ?? ''),
+            (string) ($tenant->dbpass ?? ''),
+            (string) $CFG->dbname,
+            $opts
+        );
+        if (!$result['conn']) {
+            return false;
+        }
+        $conn = $result['conn'];
+        $ok = false;
+        $res = @pg_query(
+            $conn,
+            "SELECT rolsuper OR (pg_catalog.pg_get_userbyid(d.datdba) = current_user) AS can_copy
+               FROM pg_roles r
+               CROSS JOIN pg_database d
+              WHERE r.rolname = current_user
+                AND d.datname = current_database()"
+        );
+        if ($res && ($row = pg_fetch_assoc($res))) {
+            $ok = ($row['can_copy'] === 't' || $row['can_copy'] === true || $row['can_copy'] === '1');
+        }
+        if ($res) {
+            pg_free_result($res);
+        }
+        pg_close($conn);
+        return $ok;
+    }
+
+    /**
+     * Ensure the tenant database exists (empty is fine). Used after a failed TEMPLATE DROP.
+     *
+     * @param \stdClass $tenant
+     * @param string $tenantdbname
+     * @return array{ok:bool, detail:string}
+     */
+    private static function ensure_empty_tenant_database(\stdClass $tenant, string $tenantdbname): array {
+        global $CFG;
+
+        if (!function_exists('pg_connect')) {
+            return ['ok' => false, 'detail' => 'pgsql extension not loaded'];
+        }
+
+        // Already usable?
+        $probe = postgres_helper::connect_tenant_with_error($tenant, $tenantdbname);
+        if ($probe['conn']) {
+            pg_close($probe['conn']);
+            return ['ok' => true, 'detail' => 'exists'];
+        }
+
+        $opts = postgres_helper::dboptions_for_tenant($tenant);
+        $maint = postgres_helper::connect_maintenance(
+            (string) ($tenant->dbhost ?? ''),
+            (string) ($tenant->dbuser ?? ''),
+            (string) ($tenant->dbpass ?? ''),
+            $opts,
+            (string) $CFG->dbname
+        );
+        if (!$maint['conn']) {
+            return ['ok' => false, 'detail' => $maint['error']];
+        }
+        $conn = $maint['conn'];
+        $exists = @pg_query_params($conn, 'SELECT 1 FROM pg_database WHERE datname = $1', [$tenantdbname]);
+        if ($exists && pg_num_rows($exists) > 0) {
+            pg_free_result($exists);
+            pg_close($conn);
+            // Exists but connect failed — surface the earlier connect error.
+            return ['ok' => false, 'detail' => 'DB exists but connect failed: ' . $probe['error']];
+        }
+        if ($exists) {
+            pg_free_result($exists);
+        }
+        $createdb = postgres_helper::quote_ident($tenantdbname);
+        if (!@pg_query($conn, 'CREATE DATABASE ' . $createdb)) {
+            $err = pg_last_error($conn);
+            pg_close($conn);
+            return ['ok' => false, 'detail' => 'CREATE DATABASE failed: ' . $err];
+        }
+        pg_close($conn);
+        provision_logger::log_tenant($tenant, 'ensure_db', 'Recreated empty tenant database: ' . $tenantdbname);
+
+        $probe2 = postgres_helper::connect_tenant_with_error($tenant, $tenantdbname);
+        if (!$probe2['conn']) {
+            return ['ok' => false, 'detail' => 'Created DB but still cannot connect: ' . $probe2['error']];
+        }
+        pg_close($probe2['conn']);
+        return ['ok' => true, 'detail' => 'created'];
     }
 
     /**
@@ -546,7 +688,8 @@ class database_provisioner {
     }
 
     /**
-     * PHP fallback clone for PostgreSQL (pg_dump CLI when available, else schema+data copy).
+     * PHP clone for PostgreSQL using only the pgsql extension (no pg_dump/psql required).
+     * Copies sequences, tables, primary/unique keys, data, then resets sequence values.
      *
      * @param \stdClass $tenant
      * @param string $tenantdbname
@@ -554,15 +697,333 @@ class database_provisioner {
      * @return array{ok:bool, detail:string}
      */
     private static function clone_via_php_pgsql(\stdClass $tenant, string $tenantdbname, bool $copycourses): array {
-        // Incomplete schema recreation (no sequences/indexes) caused empty Moodle installs.
-        // Prefer CLI; refuse the fragile PHP path rather than marking provision "complete".
-        if (self::can_clone_via_cli('pgsql')) {
-            return self::clone_via_cli($tenant, $tenantdbname);
+        if (!function_exists('pg_connect')) {
+            return ['ok' => false, 'detail' => 'pgsql PHP extension not loaded'];
         }
-        return [
-            'ok' => false,
-            'detail' => 'PostgreSQL requires pg_dump/psql in PATH (PHP schema clone is not supported)',
-        ];
+
+        $sourceconn = postgres_helper::connect_parent();
+        $targetconn = postgres_helper::connect_tenant($tenant, $tenantdbname);
+        if (!$sourceconn) {
+            return ['ok' => false, 'detail' => 'Parent PostgreSQL connect failed for PHP clone'];
+        }
+        if (!$targetconn) {
+            pg_close($sourceconn);
+            $err = postgres_helper::connect_tenant_with_error($tenant, $tenantdbname);
+            return ['ok' => false, 'detail' => 'Tenant PostgreSQL connect failed for PHP clone: ' . $err['error']];
+        }
+
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(0);
+        }
+
+        @pg_query($targetconn, 'SET session_replication_role = replica');
+
+        $prefix = (string) ($tenant->dbprefix ?? 'mdl_');
+
+        // 1) Sequences first so column DEFAULT nextval(...) works.
+        $seqcopy = self::pgsql_copy_sequences($sourceconn, $targetconn, $prefix);
+        if ($seqcopy['ok'] === false) {
+            pg_close($sourceconn);
+            pg_close($targetconn);
+            return $seqcopy;
+        }
+
+        $tables = postgres_helper::list_prefixed_tables($sourceconn, $prefix);
+        if (!$tables) {
+            pg_close($sourceconn);
+            pg_close($targetconn);
+            return ['ok' => false, 'detail' => 'Parent PostgreSQL DB has no tables to clone'];
+        }
+
+        foreach ($tables as $table) {
+            $qtable = postgres_helper::quote_ident($table);
+            if (!@pg_query($targetconn, 'DROP TABLE IF EXISTS ' . $qtable . ' CASCADE')) {
+                $err = pg_last_error($targetconn);
+                pg_close($sourceconn);
+                pg_close($targetconn);
+                return ['ok' => false, 'detail' => 'DROP TABLE failed for ' . $table . ': ' . $err];
+            }
+
+            $ddl = self::pgsql_build_create_table($sourceconn, $table);
+            if ($ddl === null || !@pg_query($targetconn, $ddl)) {
+                $err = pg_last_error($targetconn);
+                pg_close($sourceconn);
+                pg_close($targetconn);
+                return ['ok' => false, 'detail' => 'CREATE TABLE failed for ' . $table . ': ' . ($err ?: 'null DDL')];
+            }
+
+            $pk = self::pgsql_build_primary_key($sourceconn, $table);
+            if ($pk !== null && !@pg_query($targetconn, $pk)) {
+                // Non-fatal if PK already embedded; still try continue.
+                provision_logger::log_tenant($tenant, 'clone_php', 'PK warn ' . $table . ': ' . pg_last_error($targetconn), 'warn');
+            }
+
+            $datares = @pg_query($sourceconn, 'SELECT * FROM ' . $qtable);
+            if (!$datares) {
+                $err = pg_last_error($sourceconn);
+                pg_close($sourceconn);
+                pg_close($targetconn);
+                return ['ok' => false, 'detail' => 'SELECT failed for ' . $table . ': ' . $err];
+            }
+
+            $columns = [];
+            $numfields = pg_num_fields($datares);
+            $courseindexes = [];
+            $categoryindexes = [];
+            $idindex = null;
+            for ($i = 0; $i < $numfields; $i++) {
+                $fname = (string) pg_field_name($datares, $i);
+                $columns[] = postgres_helper::quote_ident($fname);
+                if ($fname === 'course' || $fname === 'courseid') {
+                    $courseindexes[] = $i;
+                }
+                if ($fname === 'category' || $fname === 'categoryid') {
+                    $categoryindexes[] = $i;
+                }
+                if ($fname === 'id') {
+                    $idindex = $i;
+                }
+            }
+            $columnlist = implode(',', $columns);
+
+            $batch = [];
+            $batchsize = 80;
+            while ($row = pg_fetch_row($datares)) {
+                if (!self::should_copy_row($table, $prefix, $row, $courseindexes, $categoryindexes, $idindex, $copycourses)) {
+                    continue;
+                }
+                $values = [];
+                foreach ($row as $idx => $value) {
+                    $values[] = self::pgsql_sql_value($targetconn, $value, pg_field_type($datares, (int) $idx));
+                }
+                $batch[] = '(' . implode(',', $values) . ')';
+                if (count($batch) >= $batchsize) {
+                    $sql = 'INSERT INTO ' . $qtable . ' (' . $columnlist . ') VALUES ' . implode(',', $batch);
+                    if (!@pg_query($targetconn, $sql)) {
+                        $err = pg_last_error($targetconn);
+                        pg_free_result($datares);
+                        pg_close($sourceconn);
+                        pg_close($targetconn);
+                        return ['ok' => false, 'detail' => 'INSERT failed for ' . $table . ': ' . $err];
+                    }
+                    $batch = [];
+                }
+            }
+            pg_free_result($datares);
+
+            if (!empty($batch)) {
+                $sql = 'INSERT INTO ' . $qtable . ' (' . $columnlist . ') VALUES ' . implode(',', $batch);
+                if (!@pg_query($targetconn, $sql)) {
+                    $err = pg_last_error($targetconn);
+                    pg_close($sourceconn);
+                    pg_close($targetconn);
+                    return ['ok' => false, 'detail' => 'INSERT failed for ' . $table . ': ' . $err];
+                }
+            }
+        }
+
+        // 3) Reset sequences to MAX(id) so new inserts do not collide.
+        self::pgsql_reset_sequences($targetconn, $prefix);
+
+        // 4) Unique constraints / indexes (best-effort).
+        self::pgsql_copy_unique_and_indexes($sourceconn, $targetconn, $tables);
+
+        @pg_query($targetconn, 'SET session_replication_role = DEFAULT');
+        pg_close($sourceconn);
+        pg_close($targetconn);
+        return ['ok' => true, 'detail' => ''];
+    }
+
+    /**
+     * @param resource $source
+     * @param resource $target
+     * @param string $prefix
+     * @return array{ok:bool, detail:string}
+     */
+    private static function pgsql_copy_sequences($source, $target, string $prefix): array {
+        $res = @pg_query(
+            $source,
+            "SELECT c.relname AS sequencename
+               FROM pg_class c
+               JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE c.relkind = 'S' AND n.nspname = 'public'
+              ORDER BY c.relname"
+        );
+        if (!$res) {
+            return ['ok' => false, 'detail' => 'Failed listing sequences: ' . pg_last_error($source)];
+        }
+        while ($row = pg_fetch_assoc($res)) {
+            $name = (string) ($row['sequencename'] ?? '');
+            if ($name === '') {
+                continue;
+            }
+            // Only Moodle-related sequences (prefix) plus any nextval targets we may need.
+            if ($prefix !== '' && strpos($name, $prefix) !== 0) {
+                continue;
+            }
+            $qname = postgres_helper::quote_ident($name);
+            @pg_query($target, 'DROP SEQUENCE IF EXISTS ' . $qname . ' CASCADE');
+
+            $meta = @pg_query_params(
+                $source,
+                "SELECT s.seqstart, s.seqincrement, s.seqmin, s.seqmax, s.seqcache, s.seqcycle,
+                        pg_catalog.format_type(s.seqtypid, NULL) AS typ
+                   FROM pg_sequence s
+                   JOIN pg_class c ON c.oid = s.seqrelid
+                  WHERE c.relname = $1",
+                [$name]
+            );
+            $start = 1;
+            $inc = 1;
+            $min = 1;
+            $max = '9223372036854775807';
+            $cache = 1;
+            $cycle = false;
+            $typ = 'bigint';
+            if ($meta && ($m = pg_fetch_assoc($meta))) {
+                $start = (int) $m['seqstart'];
+                $inc = (int) $m['seqincrement'];
+                $min = (int) $m['seqmin'];
+                $max = (string) $m['seqmax'];
+                $cache = (int) $m['seqcache'];
+                $cycle = ($m['seqcycle'] === 't' || $m['seqcycle'] === true || $m['seqcycle'] === '1');
+                if (!empty($m['typ'])) {
+                    $typ = (string) $m['typ'];
+                }
+            }
+            if ($meta) {
+                pg_free_result($meta);
+            }
+
+            $sql = 'CREATE SEQUENCE ' . $qname .
+                ' AS ' . $typ .
+                ' INCREMENT BY ' . $inc .
+                ' MINVALUE ' . $min .
+                ' MAXVALUE ' . $max .
+                ' START WITH ' . $start .
+                ' CACHE ' . max(1, $cache) .
+                ($cycle ? ' CYCLE' : ' NO CYCLE');
+            if (!@pg_query($target, $sql)) {
+                pg_free_result($res);
+                return ['ok' => false, 'detail' => 'CREATE SEQUENCE failed for ' . $name . ': ' . pg_last_error($target)];
+            }
+        }
+        pg_free_result($res);
+        return ['ok' => true, 'detail' => ''];
+    }
+
+    /**
+     * @param resource $conn
+     * @param string $prefix
+     * @return void
+     */
+    private static function pgsql_reset_sequences($conn, string $prefix): void {
+        $res = @pg_query(
+            $conn,
+            "SELECT c.relname AS seq, a.attname AS col, t.relname AS tbl
+               FROM pg_class c
+               JOIN pg_depend d ON d.objid = c.oid AND d.deptype = 'a'
+               JOIN pg_class t ON t.oid = d.refobjid
+               JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
+               JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE c.relkind = 'S' AND n.nspname = 'public'"
+        );
+        if (!$res) {
+            return;
+        }
+        while ($row = pg_fetch_assoc($res)) {
+            $seq = (string) ($row['seq'] ?? '');
+            $col = (string) ($row['col'] ?? '');
+            $tbl = (string) ($row['tbl'] ?? '');
+            if ($seq === '' || $col === '' || $tbl === '') {
+                continue;
+            }
+            if ($prefix !== '' && strpos($tbl, $prefix) !== 0) {
+                continue;
+            }
+            $qtbl = postgres_helper::quote_ident($tbl);
+            $qcol = postgres_helper::quote_ident($col);
+            $qseq = postgres_helper::quote_ident($seq);
+            @pg_query($conn, 'ALTER SEQUENCE ' . $qseq . ' OWNED BY ' . $qtbl . '.' . $qcol);
+            @pg_query_params(
+                $conn,
+                'SELECT setval($1::regclass, COALESCE((SELECT MAX(' . $qcol . ') FROM ' . $qtbl . '), 1), true)',
+                [$seq]
+            );
+        }
+        pg_free_result($res);
+    }
+
+    /**
+     * @param resource $source
+     * @param string $table
+     * @return string|null
+     */
+    private static function pgsql_build_primary_key($source, string $table): ?string {
+        $res = @pg_query_params(
+            $source,
+            "SELECT kcu.column_name
+               FROM information_schema.table_constraints tc
+               JOIN information_schema.key_column_usage kcu
+                 ON tc.constraint_name = kcu.constraint_name
+                AND tc.table_schema = kcu.table_schema
+              WHERE tc.table_schema = 'public'
+                AND tc.table_name = $1
+                AND tc.constraint_type = 'PRIMARY KEY'
+              ORDER BY kcu.ordinal_position",
+            [$table]
+        );
+        if (!$res) {
+            return null;
+        }
+        $cols = [];
+        while ($row = pg_fetch_assoc($res)) {
+            $cols[] = postgres_helper::quote_ident((string) $row['column_name']);
+        }
+        pg_free_result($res);
+        if (!$cols) {
+            return null;
+        }
+        return 'ALTER TABLE ' . postgres_helper::quote_ident($table) .
+            ' ADD PRIMARY KEY (' . implode(', ', $cols) . ')';
+    }
+
+    /**
+     * @param resource $source
+     * @param resource $target
+     * @param string[] $tables
+     * @return void
+     */
+    private static function pgsql_copy_unique_and_indexes($source, $target, array $tables): void {
+        foreach ($tables as $table) {
+            $res = @pg_query_params(
+                $source,
+                "SELECT indexname, indexdef
+                   FROM pg_indexes
+                  WHERE schemaname = 'public' AND tablename = $1",
+                [$table]
+            );
+            if (!$res) {
+                continue;
+            }
+            while ($row = pg_fetch_assoc($res)) {
+                $def = (string) ($row['indexdef'] ?? '');
+                $name = (string) ($row['indexname'] ?? '');
+                if ($def === '' || $name === '') {
+                    continue;
+                }
+                // Skip primary-key indexes (already added).
+                if (stripos($def, ' UNIQUE INDEX ') === false && stripos($def, 'CREATE UNIQUE') === false
+                        && preg_match('/_pkey$/', $name)) {
+                    continue;
+                }
+                if (preg_match('/_pkey$/', $name)) {
+                    continue;
+                }
+                @pg_query($target, $def);
+            }
+            pg_free_result($res);
+        }
     }
 
     /**
@@ -592,7 +1053,8 @@ class database_provisioner {
                 $line .= ' NOT NULL';
             }
             $default = $col['column_default'] ?? null;
-            if ($default !== null && $default !== '' && strpos((string) $default, 'nextval(') === false) {
+            // Keep nextval defaults — sequences were created first.
+            if ($default !== null && $default !== '') {
                 $line .= ' DEFAULT ' . $default;
             }
             $parts[] = $line;
