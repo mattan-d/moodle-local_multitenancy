@@ -104,4 +104,17 @@ class provision_logger {
         }
         return $dir . '/logs/' . $safe . '.log';
     }
+
+    /**
+     * Delete the provision log file for a tenant shortcode (if present).
+     *
+     * @param string $shortcode
+     * @return void
+     */
+    public static function delete_log(string $shortcode): void {
+        $file = self::log_file_path($shortcode);
+        if ($file !== '' && is_file($file)) {
+            @unlink($file);
+        }
+    }
 }

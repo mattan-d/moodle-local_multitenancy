@@ -209,8 +209,14 @@ $string['cli_diag_hintleave'] = 'To clear sticky tenant cookies: {$a}';
 $string['registryupdated'] = 'Tenant settings were saved successfully.';
 $string['registrynotwritten'] = 'Could not write the automatic tenant list under moodledata ({dataroot}/multitenancy). Check permissions.';
 $string['notenants'] = 'No tenants defined yet.';
-$string['deleteconfirm'] = 'Delete tenant "{$a}"? This does not remove the tenant database or files.';
-$string['tenantdeleted'] = 'Tenant removed.';
+$string['deleteconfirm'] = 'Fully delete tenant "{$a}"? This removes the registry entry, drops the tenant database, and deletes the tenant moodledata directory.';
+$string['deleteconfirm_warning'] = 'Full delete is irreversible: tenant database and tenant moodledata ({dataroot}/multitenancy/tenants/<shortcode>) are destroyed. The parent Moodle database and parent moodledata are never removed.';
+$string['deleteconfirm_submit'] = 'Delete tenant completely';
+$string['deleteoption_recordonly'] = 'Delete registry entry only (keep tenant database and moodledata)';
+$string['tenantdeleted'] = 'Tenant record removed (database and moodledata were left in place).';
+$string['tenantdeleted_full'] = 'Tenant removed completely (record, database, and moodledata).';
+$string['tenantdelete_dbfailed'] = 'Could not drop the tenant database; the tenant record was not deleted. {$a}';
+$string['tenantdelete_datarootfailed'] = 'Could not remove the tenant moodledata directory; the tenant record was not deleted. {$a}';
 $string['configsnippet_title'] = 'One-time setup in config.php';
 $string['configsnippet_desc'] = '<p><strong>Once only:</strong> add two lines to the server file <code>config.php</code> (the same file where Moodle database settings and wwwroot are defined).</p>
 <ol>

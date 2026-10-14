@@ -1491,6 +1491,165 @@ class database_provisioner {
     }
 
     /**
+     * Drop the tenant database entirely (MySQL or PostgreSQL).
+     * Never drops the parent Moodle database.
+     *
+     * @param \stdClass $tenant
+     * @return array{ok:bool, detail:string}
+     */
+    public static function drop_tenant_database(\stdClass $tenant): array {
+        global $CFG;
+
+        $dbname = (string) ($tenant->dbname ?? '');
+        if ($dbname === '') {
+            return ['ok' => false, 'detail' => 'Empty tenant dbname'];
+        }
+        if ($dbname === (string) $CFG->dbname) {
+            return ['ok' => false, 'detail' => 'Refusing to drop the parent Moodle database'];
+        }
+
+        $dbtype = (string) ($tenant->dbtype ?? '');
+        if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
+            return self::drop_tenant_database_pg($tenant, $dbname);
+        }
+        if (!in_array($dbtype, self::MYSQL_FAMILY, true)) {
+            return ['ok' => false, 'detail' => 'Unsupported dbtype for DROP DATABASE: ' . $dbtype];
+        }
+
+        $conn = @new \mysqli(
+            (string) ($tenant->dbhost ?? ''),
+            (string) ($tenant->dbuser ?? ''),
+            (string) ($tenant->dbpass ?? '')
+        );
+        if ($conn->connect_errno) {
+            return ['ok' => false, 'detail' => 'DB connect failed: ' . $conn->connect_error];
+        }
+        $q = '`' . str_replace('`', '``', $dbname) . '`';
+        if (!$conn->query('DROP DATABASE IF EXISTS ' . $q)) {
+            $err = $conn->error;
+            $conn->close();
+            return ['ok' => false, 'detail' => 'DROP DATABASE failed: ' . $err];
+        }
+        $conn->close();
+        return ['ok' => true, 'detail' => 'Dropped MySQL database ' . $dbname];
+    }
+
+    /**
+     * @param \stdClass $tenant
+     * @param string $dbname
+     * @return array{ok:bool, detail:string}
+     */
+    private static function drop_tenant_database_pg(\stdClass $tenant, string $dbname): array {
+        global $CFG;
+
+        if (!function_exists('pg_connect')) {
+            return ['ok' => false, 'detail' => 'pgsql extension not loaded'];
+        }
+        $opts = postgres_helper::dboptions_for_tenant($tenant);
+        $maint = postgres_helper::connect_maintenance(
+            (string) ($tenant->dbhost ?? ''),
+            (string) ($tenant->dbuser ?? ''),
+            (string) ($tenant->dbpass ?? ''),
+            $opts,
+            (string) $CFG->dbname
+        );
+        if (!$maint['conn']) {
+            return ['ok' => false, 'detail' => $maint['error']];
+        }
+        $conn = $maint['conn'];
+
+        $exists = @pg_query_params($conn, 'SELECT 1 FROM pg_database WHERE datname = $1', [$dbname]);
+        if ($exists && pg_num_rows($exists) === 0) {
+            pg_free_result($exists);
+            pg_close($conn);
+            return ['ok' => true, 'detail' => 'Database already absent: ' . $dbname];
+        }
+        if ($exists) {
+            pg_free_result($exists);
+        }
+
+        @pg_query_params(
+            $conn,
+            "SELECT pg_terminate_backend(pid)
+               FROM pg_stat_activity
+              WHERE datname = $1 AND pid <> pg_backend_pid()",
+            [$dbname]
+        );
+
+        $q = postgres_helper::quote_ident($dbname);
+        if (!@pg_query($conn, 'DROP DATABASE ' . $q)) {
+            $err = pg_last_error($conn);
+            pg_close($conn);
+            return ['ok' => false, 'detail' => 'DROP DATABASE failed: ' . $err];
+        }
+        pg_close($conn);
+        return ['ok' => true, 'detail' => 'Dropped PostgreSQL database ' . $dbname];
+    }
+
+    /**
+     * Remove tenant dataroot directory when it is under {parent}/multitenancy/tenants/.
+     *
+     * @param \stdClass $tenant
+     * @return array{ok:bool, detail:string}
+     */
+    public static function remove_tenant_dataroot(\stdClass $tenant): array {
+        global $CFG;
+
+        $dataroot = rtrim((string) ($tenant->dataroot ?? ''), "/\\\0");
+        $parent = rtrim((string) $CFG->dataroot, "/\\\0");
+        if ($dataroot === '' || $parent === '') {
+            return ['ok' => false, 'detail' => 'Missing dataroot path'];
+        }
+        if ($dataroot === $parent) {
+            return ['ok' => false, 'detail' => 'Refusing to remove parent dataroot'];
+        }
+        $normalized = str_replace('\\', '/', $dataroot);
+        $parentnorm = str_replace('\\', '/', $parent);
+        $pattern = '#^' . preg_quote($parentnorm . '/multitenancy/tenants/', '#') . '[^/]+$#';
+        if (!preg_match($pattern, $normalized)) {
+            return [
+                'ok' => false,
+                'detail' => 'Tenant dataroot is outside the expected multitenancy/tenants/<shortcode> path; remove manually: ' . $dataroot,
+            ];
+        }
+        if (!is_dir($dataroot)) {
+            return ['ok' => true, 'detail' => 'Dataroot already absent'];
+        }
+        if (!self::remove_directory_recursive($dataroot)) {
+            return ['ok' => false, 'detail' => 'Failed to remove dataroot: ' . $dataroot];
+        }
+        return ['ok' => true, 'detail' => 'Removed dataroot ' . $dataroot];
+    }
+
+    /**
+     * @param string $dir
+     * @return bool
+     */
+    private static function remove_directory_recursive(string $dir): bool {
+        if (!is_dir($dir)) {
+            return true;
+        }
+        $items = @scandir($dir);
+        if ($items === false) {
+            return false;
+        }
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            $path = $dir . DIRECTORY_SEPARATOR . $item;
+            if (is_dir($path)) {
+                if (!self::remove_directory_recursive($path)) {
+                    return false;
+                }
+            } else if (!@unlink($path)) {
+                return false;
+            }
+        }
+        return @rmdir($dir);
+    }
+
+    /**
      * Whether the tenant database exists and has at least one table.
      *
      * @param \stdClass $tenant

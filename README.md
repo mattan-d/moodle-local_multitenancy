@@ -172,7 +172,14 @@ php local/multitenancy/cli/diagnose_gateway.php --shortcode=CODE
 
 ## מחיקת דייר
 
-מחיקה בממשק **מסירה את הרשומה והמיפוי** — **לא** מוחקת את מסד הנתונים של הדייר ולא את תיקיית ה־`dataroot`. יש לנקות ידנית אם נדרש.
+מחיקה ב־`delete.php` היא **מחיקה מלאה** כברירת מחדל:
+
+1. `DROP DATABASE` למסד הנתונים של הדייר
+2. מחיקת תיקיית ה־**moodledata** של הדייר (`{moodledata_אב}/multitenancy/tenants/<shortcode>`)
+3. מחיקת לוג ההקמה (`.../multitenancy/logs/<shortcode>.log`)
+4. הסרת הרשומה והמיפוי ב־gateway/registry
+
+אופציונלי: סימון «מחק רק את הרשומה» משאיר DB ו־moodledata. מסד הנתונים ו־moodledata של **אתר האב** לא נמחקים לעולם. אם מחיקת ה־DB או ה־moodledata נכשלת, הרשומה לא נמחקת.
 
 ---
 

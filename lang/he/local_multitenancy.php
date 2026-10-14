@@ -209,8 +209,14 @@ $string['cli_diag_hintleave'] = 'לניקוי עוגיות דייר דביקות
 $string['registryupdated'] = 'הגדרות הדייר נשמרו בהצלחה.';
 $string['registrynotwritten'] = 'לא ניתן לכתוב את רשימת הדיירים האוטומטית תחת moodledata ({dataroot}/multitenancy). בדוק הרשאות.';
 $string['notenants'] = 'עדיין לא הוגדרו דיירים.';
-$string['deleteconfirm'] = 'למחוק את הדייר "{$a}"? פעולה זו לא מוחקת את מסד הנתונים או קבצי ה־moodledata של הדייר.';
-$string['tenantdeleted'] = 'הדייר נמחק.';
+$string['deleteconfirm'] = 'למחוק לחלוטין את הדייר "{$a}"? יימחקו הרשומה, מסד הנתונים של הדייר, ותיקיית ה־moodledata של הדייר.';
+$string['deleteconfirm_warning'] = 'מחיקה מלאה היא בלתי הפיכה: מסד הנתונים של הדייר ותיקיית ה־moodledata שלו ({dataroot}/multitenancy/tenants/<קוד>) יימחקו. מסד הנתונים ו־moodledata של אתר האב לעולם לא יימחקו.';
+$string['deleteconfirm_submit'] = 'מחק דייר לחלוטין';
+$string['deleteoption_recordonly'] = 'מחק רק את הרשומה (השאר את מסד הנתונים ואת moodledata של הדייר)';
+$string['tenantdeleted'] = 'רשומת הדייר הוסרה (מסד הנתונים ו־moodledata נשארו במקום).';
+$string['tenantdeleted_full'] = 'הדייר נמחק לחלוטין (רשומה, מסד נתונים ו־moodledata).';
+$string['tenantdelete_dbfailed'] = 'לא ניתן למחוק את מסד הנתונים של הדייר; הרשומה לא נמחקה. {$a}';
+$string['tenantdelete_datarootfailed'] = 'לא ניתן למחוק את תיקיית ה־moodledata של הדייר; הרשומה לא נמחקה. {$a}';
 $string['configsnippet_title'] = 'הפעלה חד־פעמית בקובץ config.php';
 $string['configsnippet_desc'] = '<p><strong>פעם אחת בלבד</strong> צריך להוסיף שתי שורות לקובץ <code>config.php</code> בשרת (אותו קובץ שבו מוגדרים מסד הנתונים ו־wwwroot של Moodle).</p>
 <ol>
