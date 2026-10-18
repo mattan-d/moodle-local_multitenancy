@@ -198,5 +198,15 @@ function xmldb_local_multitenancy_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026041537, 'local', 'multitenancy');
     }
 
+    if ($oldversion < 2026041538) {
+        // Tenant upgrades execute inside parent cron (sync_parent_admins every 5 minutes).
+        $task = \core\task\manager::get_scheduled_task('\\local_multitenancy\\task\\sync_parent_admins');
+        if ($task) {
+            $task->set_minute('*/5');
+            \core\task\manager::configure_scheduled_task($task);
+        }
+        upgrade_plugin_savepoint(true, 2026041538, 'local', 'multitenancy');
+    }
+
     return true;
 }

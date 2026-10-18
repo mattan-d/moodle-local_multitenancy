@@ -255,13 +255,16 @@ function local_multitenancy_abort_tenant_upgrade_pending(string $code): void {
     if (!headers_sent()) {
         header('HTTP/1.1 503 Service Unavailable');
         header('Content-Type: text/plain; charset=utf-8');
-        header('Retry-After: 60');
+        header('Retry-After: 120');
     }
-    echo "Multitenancy: tenant \"" . $code . "\" is being upgraded automatically.\n\n";
-    echo "The shared Moodle code was updated on the parent site. Tenant databases are upgraded via CLI/cron\n";
-    echo "(php admin/cli/upgrade.php with MOODLE_TENANT=" . $code . ").\n\n";
-    echo "Please wait a minute and refresh. On the parent site: Manage tenants → Upgrade all tenants,\n";
-    echo "or run: php local/multitenancy/cli/upgrade_tenants.php\n\n";
-    echo "(עברית) הדייר משודרג אוטומטית אחרי עדכון האב. המתינו וריעננו, או הריצו שדרוג דיירים מהאב / cron.\n";
+    echo "Multitenancy: tenant \"" . $code . "\" is waiting for automatic upgrade.\n\n";
+    echo "Upgrades run on the parent site via the main Moodle cron:\n";
+    echo "  php admin/cli/cron.php\n\n";
+    echo "The scheduled task local_multitenancy\\task\\sync_parent_admins runs tenant\n";
+    echo "upgrades (MOODLE_TENANT=… php admin/cli/upgrade.php --non-interactive).\n\n";
+    echo "Please wait for cron, then refresh. Optional on parent:\n";
+    echo "  php local/multitenancy/cli/upgrade_tenants.php --run\n\n";
+    echo "(עברית) הדייר ממתין לשדרוג אוטומטי דרך cron.php של האב.\n";
+    echo "הריצו: php admin/cli/cron.php  ואז רעננו את הדף.\n";
     exit(0);
 }

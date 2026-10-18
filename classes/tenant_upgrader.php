@@ -162,6 +162,90 @@ class tenant_upgrader {
     }
 
     /**
+     * Run pending tenant upgrades now (intended for parent admin/cli/cron.php).
+     *
+     * Processes bootstrap flag files and executes admin/cli/upgrade.php per tenant
+     * that is behind the shared codebase. Prefer this over only queueing adhoc tasks.
+     *
+     * @param bool $force Run for all enabled complete tenants
+     * @return array{ran:int, ok:int, fail:int, skipped:int, messages:string[]}
+     */
+    public static function run_pending_upgrades(bool $force = false): array {
+        global $DB;
+
+        $summary = [
+            'ran' => 0,
+            'ok' => 0,
+            'fail' => 0,
+            'skipped' => 0,
+            'messages' => [],
+        ];
+
+        self::sync_parent_versions_hash();
+
+        $forcedcodes = [];
+        $dir = local_multitenancy_upgrade_queue_dir();
+        if ($dir !== '' && is_dir($dir)) {
+            foreach (glob($dir . '/*.flag') ?: [] as $file) {
+                $code = basename($file, '.flag');
+                if (preg_match('/^[a-zA-Z0-9_-]+$/', $code)) {
+                    $forcedcodes[$code] = true;
+                }
+                @unlink($file);
+            }
+        }
+
+        $tenants = $DB->get_records('local_multitenancy_tenant', ['enabled' => 1], 'sortorder ASC, id ASC');
+        foreach ($tenants as $tenant) {
+            $status = (string) ($tenant->provisionstatus ?? tenant_provisioner::STATUS_COMPLETE);
+            if ($status !== '' && $status !== tenant_provisioner::STATUS_COMPLETE) {
+                $summary['skipped']++;
+                $summary['messages'][] = $tenant->shortcode . ': skip (provision ' . $status . ')';
+                continue;
+            }
+            $needs = $force
+                || isset($forcedcodes[$tenant->shortcode])
+                || self::tenant_record_needs_upgrade($tenant);
+            if (!$needs) {
+                $summary['skipped']++;
+                continue;
+            }
+
+            $summary['ran']++;
+            $result = self::run_cli_upgrade($tenant);
+            if ($result['ok']) {
+                $summary['ok']++;
+                $summary['messages'][] = $tenant->shortcode . ': OK';
+            } else {
+                $summary['fail']++;
+                $summary['messages'][] = $tenant->shortcode . ': FAIL — ' . $result['detail'];
+                // Keep a flag so the next cron retries.
+                local_multitenancy_queue_tenant_upgrade_flag((string) $tenant->shortcode);
+            }
+        }
+
+        // Mark parent hash synced only when nothing is still pending.
+        $still = 0;
+        foreach ($DB->get_records('local_multitenancy_tenant', ['enabled' => 1]) as $tenant) {
+            $status = (string) ($tenant->provisionstatus ?? tenant_provisioner::STATUS_COMPLETE);
+            if ($status !== '' && $status !== tenant_provisioner::STATUS_COMPLETE) {
+                continue;
+            }
+            if (self::tenant_record_needs_upgrade($tenant)) {
+                $still++;
+            }
+        }
+        if ($still === 0) {
+            $hash = (string) get_config('local_multitenancy', 'parent_allversionshash');
+            if ($hash !== '') {
+                set_config('last_upgraded_parent_hash', $hash, 'local_multitenancy');
+            }
+        }
+
+        return $summary;
+    }
+
+    /**
      * @param \stdClass $tenant
      * @return bool
      */

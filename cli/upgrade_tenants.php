@@ -84,41 +84,21 @@ if ($code !== '') {
         exit($result['ok'] ? 0 : 1);
     }
     \local_multitenancy\tenant_upgrader::queue((int) $tenant->id);
-    cli_writeln('Queued upgrade for ' . $tenant->shortcode);
+    cli_writeln('Queued upgrade for ' . $tenant->shortcode . ' (will run on next admin/cli/cron.php)');
     exit(0);
 }
 
-$tenants = $DB->get_records('local_multitenancy_tenant', ['enabled' => 1], 'sortorder ASC, id ASC');
-$ok = 0;
-$fail = 0;
-$skipped = 0;
-foreach ($tenants as $tenant) {
-    $status = (string) ($tenant->provisionstatus ?? \local_multitenancy\tenant_provisioner::STATUS_COMPLETE);
-    if ($status !== '' && $status !== \local_multitenancy\tenant_provisioner::STATUS_COMPLETE) {
-        cli_writeln($tenant->shortcode . ': skip (provision ' . $status . ')');
-        $skipped++;
-        continue;
+// Default: same path as the scheduled task inside cron.php
+if ($run || $force) {
+    $summary = \local_multitenancy\tenant_upgrader::run_pending_upgrades($force);
+    foreach ($summary['messages'] as $line) {
+        cli_writeln($line);
     }
-    if (!$force && !\local_multitenancy\tenant_upgrader::tenant_record_needs_upgrade($tenant)) {
-        cli_writeln($tenant->shortcode . ': already current');
-        $skipped++;
-        continue;
-    }
-    if ($run) {
-        $result = \local_multitenancy\tenant_upgrader::run_cli_upgrade($tenant);
-        cli_writeln($tenant->shortcode . ': ' . ($result['ok'] ? 'OK' : 'FAIL'));
-        if ($result['ok']) {
-            $ok++;
-        } else {
-            $fail++;
-            cli_writeln('  ' . $result['detail']);
-        }
-    } else {
-        \local_multitenancy\tenant_upgrader::queue((int) $tenant->id);
-        cli_writeln($tenant->shortcode . ': queued');
-        $ok++;
-    }
+    cli_writeln('Done. ran=' . $summary['ran'] . ' ok=' . $summary['ok']
+        . ' fail=' . $summary['fail'] . ' skipped=' . $summary['skipped']);
+    exit($summary['fail'] > 0 ? 1 : 0);
 }
 
-cli_writeln("Done. ok={$ok} fail={$fail} skipped={$skipped}");
-exit($fail > 0 ? 1 : 0);
+$n = \local_multitenancy\tenant_upgrader::queue_all_needing_upgrade(false);
+cli_writeln("Queued {$n} tenant upgrade(s). Run: php admin/cli/cron.php");
+exit(0);

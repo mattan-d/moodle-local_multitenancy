@@ -20,7 +20,8 @@ $tasks = [
     [
         'classname' => 'local_multitenancy\task\sync_parent_admins',
         'blocking' => 0,
-        'minute' => '*/15',
+        // Every 5 minutes on the parent site: settings sync + tenant CLI upgrades.
+        'minute' => '*/5',
         'hour' => '*',
         'day' => '*',
         'month' => '*',

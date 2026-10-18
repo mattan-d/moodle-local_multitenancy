@@ -19,7 +19,7 @@ namespace local_multitenancy\task;
 defined('MOODLE_INTERNAL') || die();
 
 /**
- * Scheduled task: sync parent site administrators to tenant databases.
+ * Scheduled task (parent cron.php): sync settings + run tenant DB upgrades.
  *
  * @package    local_multitenancy
  * @copyright  2026
@@ -53,10 +53,14 @@ class sync_parent_admins extends \core\task\scheduled_task {
             mtrace('local_multitenancy: auto-retried incomplete provisioning for ' . $retried . ' tenant(s).');
         }
 
-        // After parent code/plugin changes: queue CLI upgrades so tenants never see admin upgrade UI.
-        $upgradequeued = \local_multitenancy\tenant_upgrader::queue_if_parent_changed();
-        if ($upgradequeued > 0) {
-            mtrace('local_multitenancy: queued automatic upgrade for ' . $upgradequeued . ' tenant(s).');
+        // Tenant DB upgrades via parent cron (admin/cli/cron.php) — run CLI upgrade now,
+        // do not only queue adhoc tasks (those can sit if adhoc processing is delayed).
+        mtrace('local_multitenancy: checking tenant database upgrades...');
+        $up = \local_multitenancy\tenant_upgrader::run_pending_upgrades(false);
+        mtrace('local_multitenancy: tenant upgrades finished.');
+        mtrace('  ran: ' . $up['ran'] . ', ok: ' . $up['ok'] . ', fail: ' . $up['fail'] . ', skipped: ' . $up['skipped']);
+        foreach ($up['messages'] as $line) {
+            mtrace('  - ' . $line);
         }
 
         $summary = \local_multitenancy\admin_sync::sync_all_enabled_tenants();

@@ -176,28 +176,26 @@ php local/multitenancy/cli/diagnose_gateway.php --shortcode=CODE
 
 אחרי עדכון קוד Moodle או תוספים **באתר האב**, מסדי הנתונים של הדיירים חייבים לעבור `admin/cli/upgrade.php` — אחרת מופיע מסך «בדיקת תוספים» / שדרוג.
 
-התוסף מטפל בזה אוטומטית:
+התוסף מטפל בזה אוטומטית דרך **cron.php של האב**:
 
-1. בעת שינוי גרסאות באב (או בכניסה ל«ניהול דיירים») — מתוזמנות משימות adhoc לכל דייר מוכן.
-2. ה־cron של האב מריץ לכל דייר: `MOODLE_TENANT=<קוד> php admin/cli/upgrade.php --non-interactive`.
-3. בדייר עצמו **לא** מוצג מסך השדרוג — אם המסד מיושן מוצגת הודעת 503 עד שהשדרוג מסתיים.
+1. המשימה המתוזמנת `local_multitenancy\task\sync_parent_admins` (כל 5 דקות) מריצה לכל דייר שצריך שדרוג:
+   `MOODLE_TENANT=<קוד> php admin/cli/upgrade.php --non-interactive`
+2. כניסה לדייר עם מסד מיושן מציגה 503 קצר וממתינה ל־cron (בלי מסך «בדיקת תוספים»).
+3. ודאו ש־`php admin/cli/cron.php` רץ על **אתר האב** (לא על דייר).
 
-ידנית מהאב:
+הפעלה מיידית מהאב:
 
 ```bash
-# תזמון בלבד (cron יריץ)
-php local/multitenancy/cli/upgrade_tenants.php
+# הדרך הרגילה — אותו מסלול כמו cron
+php admin/cli/cron.php
 
-# הרצה מיידית לכל הדיירים שצריכים שדרוג
+# או שדרוג דיירים בלבד
 php local/multitenancy/cli/upgrade_tenants.php --run
-
-# דייר בודד
-php local/multitenancy/cli/upgrade_tenants.php --tenant=demo03 --run
 ```
 
-בממשק: **ניהול דיירים → שדרג את כל הדיירים**.
+בממשק: **ניהול דיירים → שדרג את כל הדיירים** (מכניס לתור; ה־cron מבצע).
 
-**חשוב:** השדרוג של האב עצמו (`admin/index.php` / `admin/cli/upgrade.php` בלי `MOODLE_TENANT`) נשאר ידני. רק הדיירים משודרגים אוטומטית אחריו.
+**חשוב:** שדרוג האב עצמו נשאר ידני. רק מסדי הדיירים משודרגים אוטומטית אחריו.
 
 ---
 
