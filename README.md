@@ -94,7 +94,9 @@ local_multitenancy_bootstrap($CFG);
 
 `local/multitenancy/users/{קוד_הדייר}/`
 
-עם קובץ `index.php` שנוצר אוטומטית (stub). כתובת הכניסה הטיפוסית:
+עם קובץ `index.php` שנוצר אוטומטית (stub **v8+**). ה־stub **לא** טוען את Moodle (`setup.php`) — הוא רק מציב עוגיות דייר ומפנה ל־wwwroot הציבורי דרך `gateway_entry.php`. כך נמנע דף לבן (HTTP 200 ריק) שנגרם מ־`initialise_fullme` כש־SCRIPT הוא נתיב ה־gateway.
+
+כתובת הכניסה הטיפוסית:
 
 `https://<האתר-שלך>/local/multitenancy/users/<קוד>/`
 
@@ -228,7 +230,7 @@ php local/multitenancy/cli/upgrade_tenants.php --tenant=demo03 --run
 | `too_many_redirects` / לולאת הפניות | `/local/multitenancy/leave.php`, ואז המתינו לניסיון הקמה אוטומטי מחדש (או דיאגנוזה). |
 | מסך התקנת Moodle ב־gateway | Clone לא הושלם — המערכת אמורה לתקן אוטומטית; אל תריץ install ידנית. |
 | מסך שדרוג/בדיקת תוספים בדייר | אמור לא להופיע — הריצו `php local/multitenancy/cli/upgrade_tenants.php --run` או cron באב; בדקו לוג הקמה. |
-| דף לבן ב־gateway | עדכנו stub (v7+) דרך ניהול דיירים / upgrade; בדקו redirect ל־wwwroot. דיאגנוזה או `diagnose_gateway.php`. |
+| דף לבן ב־gateway | ודאו stub **v8** + קובץ `gateway_entry.php` (ניהול דיירים / upgrade). ה־gateway לא אמור לטעון `config.php` המלא. |
 | אתחול DB נכשל | הרשאות DB; ב־pgsql: בעלות על מסד האב ל־TEMPLATE, או `pg_dump` בגרסה ≥ לשרת (לא 13 מול 15). לוג בדיאגנוזה. |
 
 ---

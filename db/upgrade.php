@@ -179,5 +179,12 @@ function xmldb_local_multitenancy_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026041534, 'local', 'multitenancy');
     }
 
+    if ($oldversion < 2026041535) {
+        // Stub v8: lightweight gateway_entry.php (no Moodle setup) — fixes blank 200 on gateway URLs.
+        \local_multitenancy\registry_writer::sync();
+        \local_multitenancy\gateway_manager::sync();
+        upgrade_plugin_savepoint(true, 2026041535, 'local', 'multitenancy');
+    }
+
     return true;
 }

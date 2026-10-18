@@ -116,6 +116,23 @@ class registry_writer {
         }
         @chmod($target, 0660);
 
+        // Lightweight gateway (gateway_entry.php) reads this without loading Moodle setup.
+        global $CFG;
+        if (!function_exists('local_multitenancy_normalize_public_wwwroot')) {
+            require_once(dirname(__DIR__) . '/wwwroot_lib.php');
+        }
+        $paths = [
+            'registrydir' => $dir,
+            'wwwroot' => !empty($CFG->wwwroot)
+                ? \local_multitenancy_normalize_public_wwwroot((string) $CFG->wwwroot)
+                : '',
+            'dataroot' => !empty($CFG->dataroot) ? rtrim((string) $CFG->dataroot, "/\\\0") : '',
+        ];
+        $pathsfile = $dir . '/gateway_paths.php';
+        $pathsbody = $header . 'return ' . var_export($paths, true) . ";\n";
+        @file_put_contents($pathsfile, $pathsbody);
+        @chmod($pathsfile, 0660);
+
         return true;
     }
 }
