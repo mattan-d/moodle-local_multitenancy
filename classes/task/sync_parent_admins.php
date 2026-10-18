@@ -53,6 +53,12 @@ class sync_parent_admins extends \core\task\scheduled_task {
             mtrace('local_multitenancy: auto-retried incomplete provisioning for ' . $retried . ' tenant(s).');
         }
 
+        // After parent code/plugin changes: queue CLI upgrades so tenants never see admin upgrade UI.
+        $upgradequeued = \local_multitenancy\tenant_upgrader::queue_if_parent_changed();
+        if ($upgradequeued > 0) {
+            mtrace('local_multitenancy: queued automatic upgrade for ' . $upgradequeued . ' tenant(s).');
+        }
+
         $summary = \local_multitenancy\admin_sync::sync_all_enabled_tenants();
         mtrace('local_multitenancy: parent admin sync finished.');
         mtrace('  tenants: ' . $summary['tenants']);

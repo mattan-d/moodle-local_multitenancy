@@ -271,6 +271,7 @@ function local_multitenancy_is_absolute_dataroot(string $path): bool {
 
 require_once(__DIR__ . '/wwwroot_lib.php');
 require_once(__DIR__ . '/registry_lib.php');
+require_once(__DIR__ . '/upgrade_lib.php');
 
 /**
  * @param string $wwwroot
@@ -702,6 +703,17 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
     if (!local_multitenancy_tenant_db_is_installed($tenant)) {
         $code = (string) ($tenant['shortcode'] ?? '');
         local_multitenancy_abort_tenant_db_not_installed($code !== '' ? $code : '(unknown)');
+    }
+
+    // After parent code/plugin updates, tenant DBs must run CLI upgrade — never show
+    // admin/index.php plugins-check / upgrade UI on tenants (web only; CLI upgrade allowed).
+    if (!$iscli && local_multitenancy_tenant_needs_code_upgrade($tenant)) {
+        $code = (string) ($tenant['shortcode'] ?? '');
+        if ($code === '') {
+            $code = '(unknown)';
+        }
+        local_multitenancy_queue_tenant_upgrade_flag($code);
+        local_multitenancy_abort_tenant_upgrade_pending($code);
     }
 
     local_multitenancy_apply_tenant($cfg, $tenant, $setcookie);

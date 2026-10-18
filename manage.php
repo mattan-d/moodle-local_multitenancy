@@ -42,9 +42,22 @@ if ($autoretried > 0) {
     \core\notification::info(get_string('diagnose_autoretry', 'local_multitenancy', $autoretried));
 }
 
+// Keep parent versions hash fresh; queue tenant DB upgrades when codebase changed.
+$upgradequeued = \local_multitenancy\tenant_upgrader::queue_if_parent_changed();
+if ($upgradequeued > 0) {
+    \core\notification::info(get_string('manage_upgrade_queued', 'local_multitenancy', $upgradequeued));
+}
+
 $PAGE->set_url(new moodle_url('/local/multitenancy/manage.php'));
 $PAGE->set_title(get_string('manage_tenants', 'local_multitenancy'));
 $PAGE->set_heading(get_string('manage_tenants', 'local_multitenancy'));
+
+$action = optional_param('action', '', PARAM_ALPHA);
+if ($action === 'upgradeall' && confirm_sesskey()) {
+    $n = \local_multitenancy\tenant_upgrader::queue_all_needing_upgrade(true);
+    \core\notification::success(get_string('manage_upgrade_queued', 'local_multitenancy', $n));
+    redirect(new moodle_url('/local/multitenancy/manage.php'));
+}
 
 echo $OUTPUT->header();
 echo $OUTPUT->heading(get_string('manage_tenants', 'local_multitenancy'));
@@ -58,6 +71,7 @@ echo $OUTPUT->notification(
     get_string('manage_recovery_hint', 'local_multitenancy', $leaveurl->out(false)),
     'info'
 );
+echo $OUTPUT->notification(get_string('manage_upgrade_hint', 'local_multitenancy'), 'info');
 
 $addurl = new moodle_url('/local/multitenancy/edit.php');
 echo $OUTPUT->single_button($addurl, get_string('addtenant', 'local_multitenancy'), 'get');
@@ -65,6 +79,8 @@ $allowedlisturl = new moodle_url('/local/multitenancy/allowed_shortcodes.php');
 echo $OUTPUT->single_button($allowedlisturl, get_string('manageallowedshortcodes', 'local_multitenancy'), 'get');
 $usersurl = new moodle_url('/local/multitenancy/users_manage.php');
 echo $OUTPUT->single_button($usersurl, get_string('manageusers', 'local_multitenancy'), 'get');
+$upgradeallurl = new moodle_url('/local/multitenancy/manage.php', ['action' => 'upgradeall', 'sesskey' => sesskey()]);
+echo $OUTPUT->single_button($upgradeallurl, get_string('manage_upgrade_all', 'local_multitenancy'), 'post');
 echo $OUTPUT->single_button($leaveurl, get_string('footerleavetenant', 'local_multitenancy'), 'get');
 
 $tenants = $DB->get_records('local_multitenancy_tenant', null, 'sortorder ASC, id ASC');

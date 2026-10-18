@@ -170,6 +170,35 @@ php local/multitenancy/cli/diagnose_gateway.php --shortcode=CODE
 
 ---
 
+## שדרוג אוטומטי לכל הדיירים
+
+אחרי עדכון קוד Moodle או תוספים **באתר האב**, מסדי הנתונים של הדיירים חייבים לעבור `admin/cli/upgrade.php` — אחרת מופיע מסך «בדיקת תוספים» / שדרוג.
+
+התוסף מטפל בזה אוטומטית:
+
+1. בעת שינוי גרסאות באב (או בכניסה ל«ניהול דיירים») — מתוזמנות משימות adhoc לכל דייר מוכן.
+2. ה־cron של האב מריץ לכל דייר: `MOODLE_TENANT=<קוד> php admin/cli/upgrade.php --non-interactive`.
+3. בדייר עצמו **לא** מוצג מסך השדרוג — אם המסד מיושן מוצגת הודעת 503 עד שהשדרוג מסתיים.
+
+ידנית מהאב:
+
+```bash
+# תזמון בלבד (cron יריץ)
+php local/multitenancy/cli/upgrade_tenants.php
+
+# הרצה מיידית לכל הדיירים שצריכים שדרוג
+php local/multitenancy/cli/upgrade_tenants.php --run
+
+# דייר בודד
+php local/multitenancy/cli/upgrade_tenants.php --tenant=demo03 --run
+```
+
+בממשק: **ניהול דיירים → שדרג את כל הדיירים**.
+
+**חשוב:** השדרוג של האב עצמו (`admin/index.php` / `admin/cli/upgrade.php` בלי `MOODLE_TENANT`) נשאר ידני. רק הדיירים משודרגים אוטומטית אחריו.
+
+---
+
 ## מחיקת דייר
 
 מחיקה ב־`delete.php` היא **מחיקה מלאה** כברירת מחדל:
@@ -198,6 +227,7 @@ php local/multitenancy/cli/diagnose_gateway.php --shortcode=CODE
 | 404 / 503 בכניסה ל־gateway | דייר לא מוכן (המתן ל«הושלם»), מושבת, או registry לא עודכן. שגיאות מוצגות בעמוד ניהול דיירים. |
 | `too_many_redirects` / לולאת הפניות | `/local/multitenancy/leave.php`, ואז המתינו לניסיון הקמה אוטומטי מחדש (או דיאגנוזה). |
 | מסך התקנת Moodle ב־gateway | Clone לא הושלם — המערכת אמורה לתקן אוטומטית; אל תריץ install ידנית. |
+| מסך שדרוג/בדיקת תוספים בדייר | אמור לא להופיע — הריצו `php local/multitenancy/cli/upgrade_tenants.php --run` או cron באב; בדקו לוג הקמה. |
 | דף לבן | דיאגנוזה בממשק או `diagnose_gateway.php`, לוגי PHP/שרת, HTTPS ועוגיות `Secure`. |
 | אתחול DB נכשל | הרשאות DB; ב־pgsql: בעלות על מסד האב ל־TEMPLATE, או `pg_dump` בגרסה ≥ לשרת (לא 13 מול 15). לוג בדיאגנוזה. |
 

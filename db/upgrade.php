@@ -164,5 +164,14 @@ function xmldb_local_multitenancy_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026041521, 'local', 'multitenancy');
     }
 
+    if ($oldversion < 2026041533) {
+        // After parent plugin upgrade, queue CLI upgrades for all tenant databases.
+        if (class_exists('\local_multitenancy\tenant_upgrader')) {
+            \local_multitenancy\tenant_upgrader::sync_parent_versions_hash();
+            \local_multitenancy\tenant_upgrader::queue_all_needing_upgrade(true);
+        }
+        upgrade_plugin_savepoint(true, 2026041533, 'local', 'multitenancy');
+    }
+
     return true;
 }
