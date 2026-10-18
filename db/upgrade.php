@@ -173,5 +173,11 @@ function xmldb_local_multitenancy_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026041533, 'local', 'multitenancy');
     }
 
+    if ($oldversion < 2026041534) {
+        // Rewrite gateway stubs (v7): never return blank 200 when redirect headers were already sent.
+        \local_multitenancy\gateway_manager::sync();
+        upgrade_plugin_savepoint(true, 2026041534, 'local', 'multitenancy');
+    }
+
     return true;
 }

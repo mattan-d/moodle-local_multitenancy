@@ -707,13 +707,22 @@ function local_multitenancy_bootstrap(stdClass $cfg): void {
 
     // After parent code/plugin updates, tenant DBs must run CLI upgrade — never show
     // admin/index.php plugins-check / upgrade UI on tenants (web only; CLI upgrade allowed).
-    if (!$iscli && local_multitenancy_tenant_needs_code_upgrade($tenant)) {
-        $code = (string) ($tenant['shortcode'] ?? '');
-        if ($code === '') {
-            $code = '(unknown)';
+    if (!$iscli) {
+        $needsupgrade = false;
+        try {
+            $needsupgrade = local_multitenancy_tenant_needs_code_upgrade($tenant);
+        } catch (Throwable $e) {
+            // Do not white-screen the gateway on a probe failure; continue to apply tenant.
+            $needsupgrade = false;
         }
-        local_multitenancy_queue_tenant_upgrade_flag($code);
-        local_multitenancy_abort_tenant_upgrade_pending($code);
+        if ($needsupgrade) {
+            $code = (string) ($tenant['shortcode'] ?? '');
+            if ($code === '') {
+                $code = '(unknown)';
+            }
+            local_multitenancy_queue_tenant_upgrade_flag($code);
+            local_multitenancy_abort_tenant_upgrade_pending($code);
+        }
     }
 
     local_multitenancy_apply_tenant($cfg, $tenant, $setcookie);

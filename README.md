@@ -228,7 +228,7 @@ php local/multitenancy/cli/upgrade_tenants.php --tenant=demo03 --run
 | `too_many_redirects` / לולאת הפניות | `/local/multitenancy/leave.php`, ואז המתינו לניסיון הקמה אוטומטי מחדש (או דיאגנוזה). |
 | מסך התקנת Moodle ב־gateway | Clone לא הושלם — המערכת אמורה לתקן אוטומטית; אל תריץ install ידנית. |
 | מסך שדרוג/בדיקת תוספים בדייר | אמור לא להופיע — הריצו `php local/multitenancy/cli/upgrade_tenants.php --run` או cron באב; בדקו לוג הקמה. |
-| דף לבן | דיאגנוזה בממשק או `diagnose_gateway.php`, לוגי PHP/שרת, HTTPS ועוגיות `Secure`. |
+| דף לבן ב־gateway | עדכנו stub (v7+) דרך ניהול דיירים / upgrade; בדקו redirect ל־wwwroot. דיאגנוזה או `diagnose_gateway.php`. |
 | אתחול DB נכשל | הרשאות DB; ב־pgsql: בעלות על מסד האב ל־TEMPLATE, או `pg_dump` בגרסה ≥ לשרת (לא 13 מול 15). לוג בדיאגנוזה. |
 
 ---
