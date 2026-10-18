@@ -17,22 +17,36 @@
 /**
  * Lightweight gateway entry: set tenant cookies and redirect to public wwwroot.
  *
- * Intentionally does NOT load Moodle lib/setup.php — loading full Moodle from
- * /local/multitenancy/users/{code}/index.php leaves SCRIPT mismatched and yields
- * a blank HTTP 200 on many installs (initialise_fullme).
- *
- * Included from users/{code}/index.php (auto-generated stub).
+ * Does NOT load Moodle setup.php or version.php (version.php dies without
+ * MOODLE_INTERNAL — that was the blank HTTP 200 on ?code=...).
  *
  * @package    local_multitenancy
  * @copyright  2026
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-require_once(__DIR__ . '/wwwroot_lib.php');
-require_once(__DIR__ . '/registry_lib.php');
-require_once(__DIR__ . '/upgrade_lib.php');
+error_reporting(E_ALL);
+ini_set('display_errors', '1');
 
-// Cookie constant names (same as bootstrap.php; avoid loading full bootstrap here).
+register_shutdown_function(static function (): void {
+    $err = error_get_last();
+    if ($err === null) {
+        return;
+    }
+    $fatals = [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR];
+    if (!in_array($err['type'], $fatals, true)) {
+        return;
+    }
+    if (!headers_sent()) {
+        http_response_code(500);
+        header('Content-Type: text/plain; charset=UTF-8');
+    }
+    echo "\n[PHP fatal in gateway_entry] ", $err['message'],
+        ' in ', $err['file'], ':', $err['line'], "\n";
+});
+
+require_once(__DIR__ . '/wwwroot_lib.php');
+
 if (!defined('LOCAL_MULTITENANCY_COOKIE')) {
     define('LOCAL_MULTITENANCY_COOKIE', 'local_mt_sc');
 }
@@ -42,12 +56,12 @@ if (!defined('LOCAL_MULTITENANCY_WWWROOT_COOKIE')) {
 
 /**
  * @param string $message
- * @param int $code
+ * @param int $status
  * @return void
  */
-function local_multitenancy_gateway_fail(string $message, int $code = 500): void {
+function local_multitenancy_gateway_fail(string $message, int $status = 500): void {
     if (!headers_sent()) {
-        http_response_code($code);
+        http_response_code($status);
         header('Content-Type: text/plain; charset=UTF-8');
     }
     echo $message;
@@ -58,10 +72,18 @@ function local_multitenancy_gateway_fail(string $message, int $code = 500): void
 }
 
 /**
- * Walk up from a path to find Moodle config.php.
- *
+ * @param string $step
+ * @return void
+ */
+function local_multitenancy_gateway_step(string $step): void {
+    if (!headers_sent()) {
+        header('X-MT-Gateway-Step: ' . $step);
+    }
+}
+
+/**
  * @param string $start
- * @return string Empty when not found.
+ * @return string
  */
 function local_multitenancy_gateway_find_cfgroot(string $start): string {
     $d = $start;
@@ -79,8 +101,6 @@ function local_multitenancy_gateway_find_cfgroot(string $start): string {
 }
 
 /**
- * Read a simple $CFG->name = 'value'; assignment from config.php source.
- *
  * @param string $configsrc
  * @param string $name
  * @return string
@@ -130,13 +150,14 @@ function local_multitenancy_gateway_set_cookie(string $name, string $value): voi
     }
 }
 
+local_multitenancy_gateway_step('start');
+
 $code = '';
 if (!empty($_GET['code']) && is_string($_GET['code'])) {
     $code = (string) $_GET['code'];
 } else if (defined('LOCAL_MULTITENANCY_ENTRY_SHORTCODE')) {
     $code = (string) LOCAL_MULTITENANCY_ENTRY_SHORTCODE;
 } else if (!empty($_SERVER['SCRIPT_FILENAME'])) {
-    // .../users/{code}/index.php → code
     $base = basename(dirname((string) $_SERVER['SCRIPT_FILENAME']));
     if ($base !== 'users' && $base !== 'multitenancy') {
         $code = $base;
@@ -151,6 +172,8 @@ if ($code === '' || !preg_match('/^[a-zA-Z0-9_-]+$/', $code)) {
         400
     );
 }
+
+local_multitenancy_gateway_step('code:' . $code);
 
 $cfgroot = local_multitenancy_gateway_find_cfgroot(dirname(__DIR__, 2));
 if ($cfgroot === '') {
@@ -168,12 +191,13 @@ if ($configsrc === '') {
 $dataroot = local_multitenancy_gateway_parse_cfg_string($configsrc, 'dataroot');
 $wwwrootfromcfg = local_multitenancy_gateway_parse_cfg_string($configsrc, 'wwwroot');
 
+local_multitenancy_gateway_step('config-parsed');
+
 $registrydir = '';
-$pathsfile = '';
 if ($dataroot !== '') {
     $pathsfile = rtrim($dataroot, "/\\\0") . '/multitenancy/gateway_paths.php';
     if (is_readable($pathsfile)) {
-        /** @var array $paths */
+        /** @var mixed $paths */
         $paths = include $pathsfile;
         if (is_array($paths)) {
             if (!empty($paths['registrydir'])) {
@@ -189,7 +213,6 @@ if ($dataroot !== '') {
     }
 }
 
-// Optional override in config.php: define('MULTITENANCY_REGISTRY_DIR', '...');
 if (preg_match("/define\s*\(\s*['\"]MULTITENANCY_REGISTRY_DIR['\"]\s*,\s*['\"]([^'\"]+)['\"]\s*\)/", $configsrc, $m)) {
     $registrydir = rtrim((string) $m[1], "/\\\0");
 }
@@ -197,7 +220,7 @@ if (preg_match("/define\s*\(\s*['\"]MULTITENANCY_REGISTRY_DIR['\"]\s*,\s*['\"]([
 if ($registrydir === '' || !is_dir($registrydir)) {
     local_multitenancy_gateway_fail(
         "Multitenancy gateway: registry directory missing.\n" .
-        "dataroot=" . ($dataroot !== '' ? $dataroot : '(not parsed)') . "\n" .
+        "dataroot=" . ($dataroot !== '' ? $dataroot : '(not parsed from config.php)') . "\n" .
         "Open parent Manage tenants to regenerate registry.\n",
         503
     );
@@ -211,7 +234,9 @@ if (!is_readable($registryfile)) {
     );
 }
 
-/** @var array $map */
+local_multitenancy_gateway_step('registry');
+
+/** @var mixed $map */
 $map = include $registryfile;
 if (!is_array($map)) {
     local_multitenancy_gateway_fail('Multitenancy gateway: registry.php is invalid.', 503);
@@ -241,72 +266,37 @@ if ($status !== '' && $status !== 'complete') {
     );
 }
 
-// Optional: block entry when DB is behind codebase (same rules as bootstrap).
-try {
-    if (function_exists('local_multitenancy_tenant_needs_code_upgrade')
-            && local_multitenancy_tenant_needs_code_upgrade($tenant)) {
-        if (function_exists('local_multitenancy_queue_tenant_upgrade_flag')) {
-            local_multitenancy_queue_tenant_upgrade_flag($code);
-        }
-        local_multitenancy_gateway_fail(
-            "Multitenancy: tenant \"{$code}\" is being upgraded automatically.\n" .
-            "Run on parent: php local/multitenancy/cli/upgrade_tenants.php --run\n" .
-            "(עברית) הדייר משודרג אוטומטית — המתינו או הריצו שדרוג דיירים מהאב.\n",
-            503
-        );
-    }
-} catch (Throwable $e) {
-    // Ignore probe failures; still allow cookie redirect.
-}
+local_multitenancy_gateway_step('tenant-ok');
+
+// Do NOT call upgrade_lib / include Moodle version.php here — version.php does
+// defined('MOODLE_INTERNAL') || die(); which produces a blank HTTP 200.
 
 $publicwww = null;
-// Derive from this request path (handles subdirectory installs).
-$needle = '/local/multitenancy/users/' . $code;
-$suffix = $needle . '/index.php';
-$pathprefix = null;
-foreach (['SCRIPT_NAME', 'PHP_SELF'] as $key) {
-    if (empty($_SERVER[$key])) {
-        continue;
-    }
-    $script = str_replace('\\', '/', (string) $_SERVER[$key]);
-    if (($pos = strpos($script, $suffix)) !== false) {
-        $pathprefix = $pos > 0 ? substr($script, 0, $pos) : '';
-        break;
-    }
+if ($wwwrootfromcfg !== '') {
+    $publicwww = local_multitenancy_normalize_public_wwwroot($wwwrootfromcfg);
 }
-if ($pathprefix === null) {
-    foreach (['REQUEST_URI', 'REDIRECT_URL'] as $key) {
-        $path = parse_url($_SERVER[$key] ?? '', PHP_URL_PATH);
-        $path = str_replace('\\', '/', is_string($path) ? $path : '');
-        if ($path !== '' && ($pos = strpos($path, $needle)) !== false) {
-            $pathprefix = $pos > 0 ? substr($path, 0, $pos) : '';
-            break;
-        }
-    }
+if (($publicwww === null || $publicwww === '') && !empty($tenant['wwwroot'])) {
+    $publicwww = local_multitenancy_normalize_public_wwwroot((string) $tenant['wwwroot']);
 }
-if ($pathprefix !== null) {
+if ($publicwww === null || $publicwww === '' || !preg_match('#\Ahttps?://.#iu', $publicwww)) {
+    // Last resort: current host (gateway_entry.php lives at site root path).
     $https = local_multitenancy_gateway_is_https();
     $scheme = $https ? 'https' : 'http';
     $host = (string) ($_SERVER['HTTP_HOST'] ?? '');
     if ($host !== '') {
-        $publicwww = rtrim($scheme . '://' . $host . $pathprefix, '/');
+        $publicwww = $scheme . '://' . $host;
     }
 }
-
-if ($publicwww === null && $wwwrootfromcfg !== '') {
-    $publicwww = local_multitenancy_normalize_public_wwwroot($wwwrootfromcfg);
-}
-if ($publicwww === null && !empty($tenant['wwwroot'])) {
-    $publicwww = local_multitenancy_normalize_public_wwwroot((string) $tenant['wwwroot']);
-}
-if ($publicwww === null || !preg_match('#\Ahttps?://.#iu', $publicwww)) {
+if ($publicwww === null || $publicwww === '' || !preg_match('#\Ahttps?://.#iu', $publicwww)) {
     local_multitenancy_gateway_fail(
         "Multitenancy gateway: could not determine public wwwroot for \"{$code}\".\n" .
-        "Check \$CFG->wwwroot in config.php and tenant wwwroot in Manage tenants.\n",
+        "Check \$CFG->wwwroot in config.php.\n",
         500
     );
 }
 $publicwww = rtrim($publicwww, '/');
+
+local_multitenancy_gateway_step('redirect');
 
 local_multitenancy_gateway_set_cookie(LOCAL_MULTITENANCY_COOKIE, $code);
 local_multitenancy_gateway_set_cookie(LOCAL_MULTITENANCY_WWWROOT_COOKIE, rawurlencode($publicwww));

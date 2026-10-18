@@ -193,5 +193,10 @@ function xmldb_local_multitenancy_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026041536, 'local', 'multitenancy');
     }
 
+    if ($oldversion < 2026041537) {
+        // gateway_entry must not include Moodle version.php (blank die without MOODLE_INTERNAL).
+        upgrade_plugin_savepoint(true, 2026041537, 'local', 'multitenancy');
+    }
+
     return true;
 }

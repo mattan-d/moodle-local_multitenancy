@@ -41,14 +41,18 @@ function local_multitenancy_moodle_code_version(): string {
     if ($cached !== null) {
         return $cached;
     }
-    $version = null;
     $path = local_multitenancy_moodle_root() . '/version.php';
     if (!is_readable($path)) {
         $cached = '';
         return $cached;
     }
-    include $path;
-    $cached = isset($version) ? (string) $version : '';
+    // Never include version.php without MOODLE_INTERNAL — it calls die() with no output (blank page).
+    $src = (string) @file_get_contents($path);
+    if (preg_match('/\$version\s*=\s*([0-9.]+)\s*;/', $src, $m)) {
+        $cached = (string) $m[1];
+        return $cached;
+    }
+    $cached = '';
     return $cached;
 }
 
