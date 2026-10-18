@@ -186,5 +186,12 @@ function xmldb_local_multitenancy_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026041535, 'local', 'multitenancy');
     }
 
+    if ($oldversion < 2026041536) {
+        // Stub v9 + .htaccess router; diagnose auto-repairs stale stubs that still load config.php.
+        \local_multitenancy\registry_writer::sync();
+        \local_multitenancy\gateway_manager::sync();
+        upgrade_plugin_savepoint(true, 2026041536, 'local', 'multitenancy');
+    }
+
     return true;
 }

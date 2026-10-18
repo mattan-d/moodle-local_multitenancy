@@ -263,7 +263,15 @@ $string['cli_diag_datarootnotwritable'] = 'dataroot is not writable by this user
 $string['cli_diag_datarootok'] = 'dataroot exists and is writable: {$a}';
 $string['cli_diag_gatewayindexmissing'] = 'Gateway index.php missing: {$a} — save the tenant again in admin.';
 $string['cli_diag_gatewayindexok'] = 'Gateway index.php OK: {$a}';
-$string['cli_diag_gatewaystuboutdated'] = 'Gateway index.php differs from the plugin stub — open Manage tenants (auto-refresh) or save the tenant again.';
+$string['cli_diag_gatewaystuboutdated'] = 'Gateway index.php is outdated ({$a}). Click “Repair gateway files” on this page (or open Manage tenants).';
+$string['cli_diag_gatewaystubloadsconfig'] = 'Gateway stub still loads Moodle config.php ({$a}) — this causes a blank white page. Click “Repair gateway files”.';
+$string['cli_diag_gatewayrepaired'] = 'Gateway files were auto-repaired ({$a}). Retry the gateway URL.';
+$string['cli_diag_gatewayentrymissing'] = 'gateway_entry.php is missing: {$a}';
+$string['cli_diag_gatewayliteurl'] = 'Lightweight gateway URL (recommended): {$a}';
+$string['diagnose_repairgateway'] = 'Repair gateway files';
+$string['diagnose_gateway_repaired'] = 'Gateway repaired: rewrote {$a->written} index.php file(s), {$a->htaccess} .htaccess file(s).';
+$string['diagnose_gateway_lite_hint'] = 'If /users/CODE/ is still blank, open this URL (sets cookies without loading Moodle): {$a}';
+$string['diagnose_fix_gateway'] = 'Deploy the latest local_multitenancy code, then click “Repair gateway files”. Confirm stub version is v9+ and that /local/multitenancy/gateway_entry.php?code=CODE redirects (HTTP 303).';
 $string['cli_diag_dbconnectok'] = 'Database connection OK (database: {$a}).';
 $string['cli_diag_dbskipped'] = 'Database check skipped (driver: {$a}); only mysqli/mariadb/auroramysql/pgsql are tested by this script.';
 $string['cli_diag_dbconnectfail'] = 'Database connection failed: {$a}';

@@ -45,6 +45,16 @@ $PAGE->set_url($pageurl);
 $PAGE->set_title(get_string('diagnose_title', 'local_multitenancy', $tenant->shortcode));
 $PAGE->set_heading(get_string('diagnose_title', 'local_multitenancy', $tenant->shortcode));
 
+if ($action === 'repairgateway' && confirm_sesskey()) {
+    $stats = \local_multitenancy\gateway_manager::sync();
+    \local_multitenancy\registry_writer::sync();
+    \core\notification::success(get_string('diagnose_gateway_repaired', 'local_multitenancy', (object) [
+        'written' => (int) $stats['written'],
+        'htaccess' => (int) $stats['htaccess'],
+    ]));
+    redirect($pageurl);
+}
+
 if ($action === 'reprovision' && confirm_sesskey()) {
     if (!$confirm) {
         echo $OUTPUT->header();
@@ -152,8 +162,19 @@ if ($loglines) {
     echo $OUTPUT->notification(get_string('diagnose_log_empty', 'local_multitenancy'), 'info');
 }
 
+$liteurl = new moodle_url('/local/multitenancy/gateway_entry.php', ['code' => $tenant->shortcode]);
+echo html_writer::div(
+    get_string('diagnose_gateway_lite_hint', 'local_multitenancy', $liteurl->out(false)),
+    'alert alert-secondary'
+);
+
 echo html_writer::start_div('mt-3');
 echo $OUTPUT->single_button($pageurl, get_string('diagnose_rerun', 'local_multitenancy'), 'get');
+echo $OUTPUT->single_button(
+    new moodle_url($pageurl, ['action' => 'repairgateway', 'sesskey' => sesskey()]),
+    get_string('diagnose_repairgateway', 'local_multitenancy'),
+    'post'
+);
 echo $OUTPUT->single_button(
     new moodle_url($pageurl, ['action' => 'reprovision', 'sesskey' => sesskey()]),
     get_string('diagnose_reprovision', 'local_multitenancy'),

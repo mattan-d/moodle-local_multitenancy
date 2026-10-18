@@ -130,12 +130,26 @@ function local_multitenancy_gateway_set_cookie(string $name, string $value): voi
     }
 }
 
-$code = defined('LOCAL_MULTITENANCY_ENTRY_SHORTCODE')
-    ? (string) LOCAL_MULTITENANCY_ENTRY_SHORTCODE
-    : basename(dirname($_SERVER['SCRIPT_FILENAME'] ?? __DIR__));
+$code = '';
+if (!empty($_GET['code']) && is_string($_GET['code'])) {
+    $code = (string) $_GET['code'];
+} else if (defined('LOCAL_MULTITENANCY_ENTRY_SHORTCODE')) {
+    $code = (string) LOCAL_MULTITENANCY_ENTRY_SHORTCODE;
+} else if (!empty($_SERVER['SCRIPT_FILENAME'])) {
+    // .../users/{code}/index.php → code
+    $base = basename(dirname((string) $_SERVER['SCRIPT_FILENAME']));
+    if ($base !== 'users' && $base !== 'multitenancy') {
+        $code = $base;
+    }
+}
+$code = trim($code);
 
 if ($code === '' || !preg_match('/^[a-zA-Z0-9_-]+$/', $code)) {
-    local_multitenancy_gateway_fail('Multitenancy gateway: invalid tenant code.', 400);
+    local_multitenancy_gateway_fail(
+        "Multitenancy gateway: invalid or missing tenant code.\n" .
+        "Use /local/multitenancy/users/{code}/ or gateway_entry.php?code={code}\n",
+        400
+    );
 }
 
 $cfgroot = local_multitenancy_gateway_find_cfgroot(dirname(__DIR__, 2));

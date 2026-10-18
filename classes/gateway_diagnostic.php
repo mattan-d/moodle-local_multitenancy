@@ -212,29 +212,70 @@ class gateway_diagnostic {
             }
         }
 
+        // Always rewrite gateway stubs before checking (stale stubs cause blank HTTP 200).
+        $syncstats = gateway_manager::sync();
+        if (!empty($syncstats['written']) || !empty($syncstats['htaccess'])) {
+            $out[] = [
+                'level' => self::LEVEL_WARN,
+                'key' => 'gatewayrepaired',
+                'detail' => 'index=' . (int) $syncstats['written'] . ', htaccess=' . (int) $syncstats['htaccess'],
+                'fix' => 'fix_gateway',
+            ];
+        }
+
         $gdir = $CFG->dirroot . '/local/multitenancy/users/' . $shortcode;
         $gindex = $gdir . '/index.php';
+        $gentry = $CFG->dirroot . '/local/multitenancy/gateway_entry.php';
+        if (!is_readable($gentry)) {
+            $out[] = [
+                'level' => self::LEVEL_ERROR,
+                'key' => 'gatewayentrymissing',
+                'detail' => $gentry,
+                'fix' => 'fix_gateway',
+            ];
+        }
         if (!is_readable($gindex)) {
             $out[] = [
                 'level' => self::LEVEL_ERROR,
                 'key' => 'gatewayindexmissing',
                 'detail' => $gindex,
+                'fix' => 'fix_gateway',
             ];
         } else {
-            $out[] = [
-                'level' => self::LEVEL_OK,
-                'key' => 'gatewayindexok',
-                'detail' => $gindex,
-            ];
+            $actual = (string) file_get_contents($gindex);
+            $stubver = gateway_manager::stub_version_from_contents($actual);
+            $loadsconfig = gateway_manager::stub_loads_moodle_config($actual);
             $expected = gateway_manager::index_file_contents();
-            $actual = file_get_contents($gindex);
-            if ($actual !== $expected) {
+
+            if ($loadsconfig) {
                 $out[] = [
-                    'level' => self::LEVEL_WARN,
+                    'level' => self::LEVEL_ERROR,
+                    'key' => 'gatewaystubloadsconfig',
+                    'detail' => $stubver . ' @ ' . $gindex,
+                    'fix' => 'fix_gateway',
+                ];
+            } else if ($actual !== $expected) {
+                $out[] = [
+                    'level' => self::LEVEL_ERROR,
                     'key' => 'gatewaystuboutdated',
-                    'detail' => '',
+                    'detail' => $stubver . ' (need ' . gateway_manager::STUB_VERSION . ')',
+                    'fix' => 'fix_gateway',
+                ];
+            } else {
+                $out[] = [
+                    'level' => self::LEVEL_OK,
+                    'key' => 'gatewayindexok',
+                    'detail' => 'stub ' . $stubver . ': ' . $gindex,
                 ];
             }
+
+            // Prefer the lightweight entry URL that never boots Moodle.
+            $lite = $CFG->wwwroot . '/local/multitenancy/gateway_entry.php?code=' . rawurlencode($shortcode);
+            $out[] = [
+                'level' => self::LEVEL_OK,
+                'key' => 'gatewayliteurl',
+                'detail' => $lite,
+            ];
         }
 
         $dbmsg = self::test_database($tenant);

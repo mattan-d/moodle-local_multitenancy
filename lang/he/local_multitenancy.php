@@ -263,7 +263,15 @@ $string['cli_diag_datarootnotwritable'] = 'אין כתיבה ל־dataroot למש
 $string['cli_diag_datarootok'] = 'dataroot קיים וניתן לכתיבה: {$a}';
 $string['cli_diag_gatewayindexmissing'] = 'חסר gateway index.php: {$a} — שמור את הדייר שוב בניהול.';
 $string['cli_diag_gatewayindexok'] = 'gateway index.php תקין: {$a}';
-$string['cli_diag_gatewaystuboutdated'] = 'תוכן index.php שונה מה־stub של התוסף — פתח את ניהול דיירים (רענון אוטומטי) או שמור את הדייר שוב.';
+$string['cli_diag_gatewaystuboutdated'] = 'קובץ gateway index.php לא מעודכן ({$a}). לחצו «תקן קבצי gateway» בעמוד זה (או פתחו ניהול דיירים).';
+$string['cli_diag_gatewaystubloadsconfig'] = 'ה־stub עדיין טוען את config.php של Moodle ({$a}) — זה גורם לדף לבן. לחצו «תקן קבצי gateway».';
+$string['cli_diag_gatewayrepaired'] = 'קבצי ה־gateway תוקנו אוטומטית ({$a}). נסו שוב את כתובת ה־gateway.';
+$string['cli_diag_gatewayentrymissing'] = 'חסר gateway_entry.php: {$a}';
+$string['cli_diag_gatewayliteurl'] = 'כתובת gateway קלה (מומלץ): {$a}';
+$string['diagnose_repairgateway'] = 'תקן קבצי gateway';
+$string['diagnose_gateway_repaired'] = 'ה־gateway תוקן: נכתבו מחדש {$a->written} קבצי index.php, {$a->htaccess} קבצי .htaccess.';
+$string['diagnose_gateway_lite_hint'] = 'אם /users/CODE/ עדיין לבן — פתחו את הכתובת הזו (עוגיות בלי טעינת Moodle): {$a}';
+$string['diagnose_fix_gateway'] = 'פרסו את גרסת local_multitenancy העדכנית, ואז לחצו «תקן קבצי gateway». ודאו שגרסת ה־stub היא v9+ וש־/local/multitenancy/gateway_entry.php?code=CODE מחזיר הפניה (HTTP 303).';
 $string['cli_diag_dbconnectok'] = 'חיבור למסד הצליח (מסד: {$a}).';
 $string['cli_diag_dbskipped'] = 'דילוג על בדיקת DB (מנהל: {$a}); הסקריפט בודק רק mysqli/mariadb/auroramysql/pgsql.';
 $string['cli_diag_dbconnectfail'] = 'חיבור למסד נכשל: {$a}';
