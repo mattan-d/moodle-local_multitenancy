@@ -65,6 +65,10 @@ class registry_writer {
             return false;
         }
 
+        if (!function_exists('local_multitenancy_normalize_public_wwwroot')) {
+            require_once(dirname(__DIR__) . '/wwwroot_lib.php');
+        }
+
         $records = $DB->get_records('local_multitenancy_tenant', null, 'sortorder ASC, id ASC');
         $map = [];
         foreach ($records as $r) {

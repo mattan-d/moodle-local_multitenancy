@@ -141,6 +141,9 @@ class gateway_diagnostic {
         }
 
         $wwwrootraw = isset($tenant['wwwroot']) ? (string) $tenant['wwwroot'] : '';
+        if (!function_exists('local_multitenancy_normalize_public_wwwroot')) {
+            require_once(dirname(__DIR__) . '/wwwroot_lib.php');
+        }
         $wwwroot = \local_multitenancy_normalize_public_wwwroot($wwwrootraw);
         if (!preg_match('#\Ahttps?://.#iu', $wwwroot)) {
             $out[] = [

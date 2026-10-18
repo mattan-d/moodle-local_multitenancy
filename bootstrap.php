@@ -291,39 +291,14 @@ function local_multitenancy_is_absolute_dataroot(string $path): bool {
     return false;
 }
 
+require_once(__DIR__ . '/wwwroot_lib.php');
+
 /**
  * @param string $wwwroot
  * @return bool
  */
 function local_multitenancy_is_valid_public_wwwroot(string $wwwroot): bool {
     return (bool) preg_match('#\Ahttps?://.#iu', $wwwroot);
-}
-
-/**
- * Strip /local/multitenancy/users/{code} from a stored tenant wwwroot so $CFG->wwwroot is the real Moodle site base.
- * Tenants may store the full gateway URL; this returns the derived public base.
- * Moodle must use the real site base (e.g. https://host or https://host/moodle).
- *
- * @param string $url
- * @return string
- */
-function local_multitenancy_normalize_public_wwwroot(string $url): string {
-    $url = rtrim(trim($url), '/');
-    if ($url === '' || !preg_match('#\Ahttps?://#iu', $url)) {
-        return $url;
-    }
-    $parts = parse_url($url);
-    if (empty($parts['scheme']) || empty($parts['host'])) {
-        return $url;
-    }
-    $path = isset($parts['path']) ? $parts['path'] : '';
-    $newpath = preg_replace('#/local/multitenancy/users/[a-zA-Z0-9_-]+$#', '', $path);
-    if ($newpath === $path) {
-        return $url;
-    }
-    $newpath = rtrim($newpath, '/');
-    $port = isset($parts['port']) ? ':' . (int) $parts['port'] : '';
-    return rtrim($parts['scheme'] . '://' . $parts['host'] . $port . ($newpath === '' ? '' : $newpath), '/');
 }
 
 /**
