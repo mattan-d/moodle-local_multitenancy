@@ -209,28 +209,6 @@ function local_multitenancy_tenant_db_is_installed(array $tenant): bool {
 }
 
 /**
- * Resolve registry directory (MULTITENANCY_REGISTRY_DIR constant or {dataroot}/multitenancy).
- *
- * @param stdClass|null $cfg
- * @return string Absolute path or empty string.
- */
-function local_multitenancy_resolve_registry_dir(?stdClass $cfg = null): string {
-    if (defined('MULTITENANCY_REGISTRY_DIR') && MULTITENANCY_REGISTRY_DIR) {
-        return rtrim((string) MULTITENANCY_REGISTRY_DIR, "/\\\0");
-    }
-    $dataroot = '';
-    if ($cfg !== null && !empty($cfg->dataroot)) {
-        $dataroot = (string) $cfg->dataroot;
-    } else if (!empty($GLOBALS['CFG']) && !empty($GLOBALS['CFG']->dataroot)) {
-        $dataroot = (string) $GLOBALS['CFG']->dataroot;
-    }
-    if ($dataroot === '') {
-        return '';
-    }
-    return rtrim($dataroot, "/\\\0") . '/multitenancy';
-}
-
-/**
  * Whether a registry tenant row may be applied (enabled + provision complete).
  *
  * @param array $tenant
@@ -292,6 +270,7 @@ function local_multitenancy_is_absolute_dataroot(string $path): bool {
 }
 
 require_once(__DIR__ . '/wwwroot_lib.php');
+require_once(__DIR__ . '/registry_lib.php');
 
 /**
  * @param string $wwwroot
@@ -340,15 +319,26 @@ function local_multitenancy_path_is_parent_admin(string $path): bool {
  * @return bool True if this request must use parent site config only.
  */
 function local_multitenancy_request_is_parent_admin(string $requesturi): bool {
+    $candidates = [];
     $path = parse_url($requesturi, PHP_URL_PATH);
+    if (is_string($path) && $path !== '') {
+        $candidates[] = $path;
+    }
+    foreach (['SCRIPT_NAME', 'PHP_SELF'] as $key) {
+        if (!empty($_SERVER[$key])) {
+            $candidates[] = str_replace('\\', '/', (string) $_SERVER[$key]);
+        }
+    }
+    // SCRIPT_FILENAME is an absolute FS path; still matches …/local/multitenancy/*.php
+    if (!empty($_SERVER['SCRIPT_FILENAME'])) {
+        $candidates[] = str_replace('\\', '/', (string) $_SERVER['SCRIPT_FILENAME']);
+    }
+    foreach ($candidates as $candidate) {
+        if (local_multitenancy_path_is_parent_admin($candidate)) {
+            return true;
+        }
+    }
     $query = parse_url($requesturi, PHP_URL_QUERY);
-    if (local_multitenancy_path_is_parent_admin($path)) {
-        return true;
-    }
-    $script = $_SERVER['SCRIPT_NAME'] ?? '';
-    if (local_multitenancy_path_is_parent_admin($script)) {
-        return true;
-    }
     // Keep plugin management/settings on parent site even when tenant cookie is set.
     if (is_string($path) && strpos($path, '/admin/settings.php') !== false && is_string($query)) {
         parse_str($query, $q);
@@ -599,6 +589,11 @@ function local_multitenancy_apply_tenant(stdClass $cfg, array $tenant, bool $set
  * @return void
  */
 function local_multitenancy_bootstrap(stdClass $cfg): void {
+    // Capture parent dataroot before any tenant override switches $CFG->dataroot.
+    if (!defined('LOCAL_MULTITENANCY_PARENT_DATAROOT') && !empty($cfg->dataroot)) {
+        define('LOCAL_MULTITENANCY_PARENT_DATAROOT', rtrim((string) $cfg->dataroot, "/\\\0"));
+    }
+
     $registrydir = local_multitenancy_resolve_registry_dir($cfg);
     if ($registrydir === '') {
         return;

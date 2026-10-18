@@ -26,6 +26,7 @@ defined('MOODLE_INTERNAL') || die();
 
 // Available even when bootstrap.php was not added to config.php.
 require_once(__DIR__ . '/wwwroot_lib.php');
+require_once(__DIR__ . '/registry_lib.php');
 
 /**
  * Return plugin string with safe fallback.

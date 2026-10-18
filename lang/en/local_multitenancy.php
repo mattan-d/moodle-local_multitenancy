@@ -241,6 +241,8 @@ Checks: MULTITENANCY_REGISTRY_DIR, registry.php, tenant row, wwwroot URL, dataro
 $string['cli_diag_invalidshortcode'] = 'Invalid tenant code: {$a}';
 $string['cli_diag_registrydirundefined'] = 'Could not resolve registry directory (check $CFG->dataroot).';
 $string['cli_diag_registrydirmissing'] = 'Tenant list directory does not exist: {$a}. It is created automatically under moodledata when you save a tenant — check write permissions.';
+$string['cli_diag_registryfallbackdb'] = 'Registry unavailable or missing this tenant; continuing checks from the database row: {$a}.';
+$string['diagnose_fix_registrydir'] = 'Open Manage tenants (parent site) so registry.php is rewritten under the parent moodledata/multitenancy. Clear a sticky tenant cookie via Leave tenant, then run diagnosis again.';
 $string['cli_diag_registryfilenotfound'] = 'registry.php does not exist yet: {$a}. Add/save a tenant in Site administration → Manage tenants (created automatically).';
 $string['cli_diag_registryfilenotreadable'] = 'registry.php exists but is not readable: {$a}. Fix permissions (chmod/chown) so CLI and the web server user can read it.';
 $string['cli_diag_registryfileok'] = 'Registry file OK: {$a}';

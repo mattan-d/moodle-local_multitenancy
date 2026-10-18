@@ -38,6 +38,13 @@ class gateway_diagnostic {
     public static function run(string $shortcode): array {
         global $CFG;
 
+        if (!function_exists('local_multitenancy_resolve_registry_dir')) {
+            require_once(dirname(__DIR__) . '/registry_lib.php');
+        }
+        if (!function_exists('local_multitenancy_normalize_public_wwwroot')) {
+            require_once(dirname(__DIR__) . '/wwwroot_lib.php');
+        }
+
         $out = [];
         $shortcode = trim($shortcode);
         if ($shortcode === '' || !preg_match('/^[a-zA-Z0-9_-]+$/', $shortcode)) {
@@ -49,81 +56,96 @@ class gateway_diagnostic {
             return $out;
         }
 
-        $registrydir = '';
-        if (function_exists('local_multitenancy_resolve_registry_dir')) {
-            global $CFG;
-            $registrydir = local_multitenancy_resolve_registry_dir($CFG);
-        } else if (defined('MULTITENANCY_REGISTRY_DIR') && MULTITENANCY_REGISTRY_DIR) {
-            $registrydir = rtrim((string) MULTITENANCY_REGISTRY_DIR, '/\\');
+        $registrydir = local_multitenancy_resolve_registry_dir($CFG);
+        if ($registrydir === '' && !empty($CFG->dataroot)) {
+            $registrydir = rtrim((string) $CFG->dataroot, "/\\\0") . '/multitenancy';
         }
+
+        $tenant = null;
         if ($registrydir === '') {
             $out[] = [
                 'level' => self::LEVEL_ERROR,
                 'key' => 'registrydirundefined',
                 'detail' => '',
+                'fix' => 'fix_registrydir',
             ];
-            return $out;
-        }
+        } else {
+            $registryfile = $registrydir . '/registry.php';
 
-        $registryfile = $registrydir . '/registry.php';
+            if (!is_dir($registrydir)) {
+                $out[] = [
+                    'level' => self::LEVEL_ERROR,
+                    'key' => 'registrydirmissing',
+                    'detail' => $registrydir,
+                    'fix' => 'fix_registrydir',
+                ];
+            } else if (!file_exists($registryfile)) {
+                $out[] = [
+                    'level' => self::LEVEL_ERROR,
+                    'key' => 'registryfilenotfound',
+                    'detail' => $registryfile,
+                    'fix' => 'fix_registrydir',
+                ];
+            } else if (!is_readable($registryfile)) {
+                $out[] = [
+                    'level' => self::LEVEL_ERROR,
+                    'key' => 'registryfilenotreadable',
+                    'detail' => $registryfile,
+                    'fix' => 'fix_registrydir',
+                ];
+            } else {
+                $out[] = [
+                    'level' => self::LEVEL_OK,
+                    'key' => 'registryfileok',
+                    'detail' => $registryfile,
+                ];
 
-        if (!is_dir($registrydir)) {
-            $out[] = [
-                'level' => self::LEVEL_ERROR,
-                'key' => 'registrydirmissing',
-                'detail' => $registrydir,
-            ];
-            return $out;
-        }
-        if (!file_exists($registryfile)) {
-            $out[] = [
-                'level' => self::LEVEL_ERROR,
-                'key' => 'registryfilenotfound',
-                'detail' => $registryfile,
-            ];
-            return $out;
-        }
-        if (!is_readable($registryfile)) {
-            $out[] = [
-                'level' => self::LEVEL_ERROR,
-                'key' => 'registryfilenotreadable',
-                'detail' => $registryfile,
-            ];
-            return $out;
-        }
-
-        $out[] = [
-            'level' => self::LEVEL_OK,
-            'key' => 'registryfileok',
-            'detail' => $registryfile,
-        ];
-
-        /** @var array $map */
-        $map = include $registryfile;
-        if (!is_array($map) || $map === []) {
-            $out[] = [
-                'level' => self::LEVEL_ERROR,
-                'key' => 'registryempty',
-                'detail' => '',
-            ];
-            return $out;
-        }
-
-        $tenant = null;
-        foreach ($map as $row) {
-            if (is_array($row) && !empty($row['shortcode']) && $row['shortcode'] === $shortcode) {
-                $tenant = $row;
-                break;
+                /** @var array $map */
+                $map = include $registryfile;
+                if (!is_array($map) || $map === []) {
+                    $out[] = [
+                        'level' => self::LEVEL_ERROR,
+                        'key' => 'registryempty',
+                        'detail' => '',
+                        'fix' => 'fix_registrydir',
+                    ];
+                } else {
+                    foreach ($map as $row) {
+                        if (is_array($row) && !empty($row['shortcode']) && $row['shortcode'] === $shortcode) {
+                            $tenant = $row;
+                            break;
+                        }
+                    }
+                    if ($tenant === null) {
+                        $out[] = [
+                            'level' => self::LEVEL_WARN,
+                            'key' => 'tenantnotinregistry',
+                            'detail' => $shortcode,
+                            'fix' => 'fix_registrydir',
+                        ];
+                    }
+                }
             }
         }
 
+        // Continue diagnosis from the DB row when registry is missing/stale.
         if ($tenant === null) {
+            $dbfallback = self::load_tenant_record($shortcode);
+            if (!$dbfallback) {
+                $out[] = [
+                    'level' => self::LEVEL_ERROR,
+                    'key' => 'tenantdbrowmissing',
+                    'detail' => $shortcode,
+                ];
+                return $out;
+            }
+            $tenant = self::tenant_array_from_record($dbfallback);
             $out[] = [
-                'level' => self::LEVEL_ERROR,
-                'key' => 'tenantnotinregistry',
+                'level' => self::LEVEL_WARN,
+                'key' => 'registryfallbackdb',
                 'detail' => $shortcode,
+                'fix' => 'fix_registrydir',
             ];
-            return $out;
         }
 
         if (empty($tenant['enabled'])) {
@@ -141,9 +163,6 @@ class gateway_diagnostic {
         }
 
         $wwwrootraw = isset($tenant['wwwroot']) ? (string) $tenant['wwwroot'] : '';
-        if (!function_exists('local_multitenancy_normalize_public_wwwroot')) {
-            require_once(dirname(__DIR__) . '/wwwroot_lib.php');
-        }
         $wwwroot = \local_multitenancy_normalize_public_wwwroot($wwwrootraw);
         if (!preg_match('#\Ahttps?://.#iu', $wwwroot)) {
             $out[] = [
@@ -355,6 +374,39 @@ class gateway_diagnostic {
         } catch (\Throwable $e) {
             return null;
         }
+    }
+
+    /**
+     * Build a registry-like tenant array from a DB row (diagnose fallback).
+     *
+     * @param \stdClass $r
+     * @return array
+     */
+    protected static function tenant_array_from_record(\stdClass $r): array {
+        $dboptions = [];
+        if (!empty($r->dboptions)) {
+            $decoded = json_decode((string) $r->dboptions, true);
+            if (is_array($decoded)) {
+                $dboptions = $decoded;
+            }
+        }
+        return [
+            'id' => (int) $r->id,
+            'shortcode' => (string) $r->shortcode,
+            'name' => (string) $r->name,
+            'enabled' => (int) $r->enabled,
+            'provisionstatus' => (string) ($r->provisionstatus ?? ''),
+            'wwwroot' => (string) $r->wwwroot,
+            'dataroot' => (string) $r->dataroot,
+            'dbhost' => (string) $r->dbhost,
+            'dbname' => (string) $r->dbname,
+            'dbuser' => (string) $r->dbuser,
+            'dbpass' => (string) $r->dbpass,
+            'prefix' => (string) $r->dbprefix,
+            'dbtype' => (string) $r->dbtype,
+            'dblibrary' => (string) $r->dblibrary,
+            'dboptions' => $dboptions,
+        ];
     }
 
     /**
