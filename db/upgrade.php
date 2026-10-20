@@ -208,5 +208,10 @@ function xmldb_local_multitenancy_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026041538, 'local', 'multitenancy');
     }
 
+    if ($oldversion < 2026041539) {
+        // "No upgrade needed" from admin/cli/upgrade.php is success (was recorded as exit -1).
+        upgrade_plugin_savepoint(true, 2026041539, 'local', 'multitenancy');
+    }
+
     return true;
 }

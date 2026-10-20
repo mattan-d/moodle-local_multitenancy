@@ -90,7 +90,7 @@ local_multitenancy_bootstrap($CFG);
 
 ## כניסה לדייר מהדפדפן (Gateway)
 
-לכל דייר מופעל נוצרת תיקייה בשרת:
+לכל דייר מופעל נוצרת תיקייה בשרת (לא ב־git; `.gitignore` מתעלם מ־`users/`):
 
 `local/multitenancy/users/{קוד_הדייר}/`
 

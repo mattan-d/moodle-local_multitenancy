@@ -337,27 +337,54 @@ class tenant_upgrader {
         $stderr .= (string) stream_get_contents($pipes[2]);
         fclose($pipes[1]);
         fclose($pipes[2]);
-        $exit = proc_close($process);
+        // proc_get_status() already reaped the process; proc_close() then returns -1.
+        $exit = isset($status['exitcode']) ? (int) $status['exitcode'] : -1;
+        proc_close($process);
 
-        $tail = trim(substr($stdout . "\n" . $stderr, -2000));
-        if ($exit !== 0) {
-            provision_logger::log_tenant($tenant, 'upgrade', 'CLI failed (exit ' . $exit . '): ' . $tail, 'error');
-            return ['ok' => false, 'detail' => 'upgrade.php exit ' . $exit . ': ' . $tail];
-        }
-
-        // Re-check; CLI may no-op successfully when already current.
-        if (self::tenant_record_needs_upgrade($tenant)) {
-            // Reload tenant in case of stale object; still behind.
-            provision_logger::log_tenant($tenant, 'upgrade', 'CLI finished but versions still mismatch: ' . $tail, 'warn');
-            return ['ok' => false, 'detail' => 'Versions still mismatch after CLI: ' . $tail];
-        }
-
-        provision_logger::log_tenant($tenant, 'upgrade', 'CLI upgrade OK');
+        $tail = trim($stdout . "\n" . $stderr);
+        $tail = trim(substr($tail, -2000));
+        // Moodle: cli_error(cliupgradenoneed, 0) — "No upgrade needed…" is success, not a failure.
+        $noneed = self::output_says_no_upgrade_needed($tail);
+        if ($noneed || $exit === 0) {
+            if ($noneed && self::tenant_record_needs_upgrade($tenant)) {
+                provision_logger::log_tenant(
+                    $tenant,
+                    'upgrade',
+                    'CLI reports no upgrade needed; treating tenant as current. ' . $tail
+                );
+            } else if (!$noneed && self::tenant_record_needs_upgrade($tenant)) {
+                provision_logger::log_tenant($tenant, 'upgrade', 'CLI finished but versions still mismatch: ' . $tail, 'warn');
+                return ['ok' => false, 'detail' => 'Versions still mismatch after CLI: ' . $tail];
+            }
+            provision_logger::log_tenant($tenant, 'upgrade', $noneed ? 'No upgrade needed (already current)' : 'CLI upgrade OK');
         $flag = local_multitenancy_upgrade_queue_dir() . '/' . $code . '.flag';
         if (is_file($flag)) {
             @unlink($flag);
         }
         return ['ok' => true, 'detail' => $tail !== '' ? $tail : 'OK'];
+        }
+
+        provision_logger::log_tenant($tenant, 'upgrade', 'CLI failed (exit ' . $exit . '): ' . $tail, 'error');
+        return ['ok' => false, 'detail' => 'upgrade.php exit ' . $exit . ': ' . $tail];
+    }
+
+    /**
+     * Moodle prints cliupgradenoneed and exits 0 when the DB is already current.
+     *
+     * @param string $output
+     * @return bool
+     */
+    private static function output_says_no_upgrade_needed(string $output): bool {
+        if ($output === '') {
+            return false;
+        }
+        if (stripos($output, 'No upgrade needed') !== false) {
+            return true;
+        }
+        if (strpos($output, 'אין צורך בשדרוג') !== false) {
+            return true;
+        }
+        return false;
     }
 
     /**

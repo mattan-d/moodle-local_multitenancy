@@ -215,6 +215,28 @@ function local_multitenancy_read_tenant_config_value(array $tenant, string $name
 }
 
 /**
+ * Moodle stores $version as 2024100704 or 2024100704.00 — treat those as the same release.
+ *
+ * @param string $left
+ * @param string $right
+ * @return bool
+ */
+function local_multitenancy_versions_match(string $left, string $right): bool {
+    $left = trim($left);
+    $right = trim($right);
+    if ($left === '' || $right === '') {
+        return false;
+    }
+    if ($left === $right) {
+        return true;
+    }
+    if (is_numeric($left) && is_numeric($right)) {
+        return abs((float) $left - (float) $right) < 0.001;
+    }
+    return false;
+}
+
+/**
  * Whether the tenant DB is behind the shared codebase (needs admin/cli/upgrade.php).
  *
  * @param array $tenant
@@ -230,7 +252,7 @@ function local_multitenancy_tenant_needs_code_upgrade(array $tenant): bool {
         // Not installed / unreadable — leave to provision/diagnose, not upgrade UI.
         return false;
     }
-    if ((string) $dbversion !== (string) $codeversion) {
+    if (!local_multitenancy_versions_match((string) $dbversion, (string) $codeversion)) {
         return true;
     }
 
