@@ -75,6 +75,8 @@ local_multitenancy_bootstrap($CFG);
 - חלופות: `pg_dump`/`psql` או (ב־MySQL) העתקת PHP.
 - אפשר לבחור האם **להעתיק גם קורסים וכל נתוני הקורסים**, או רק סביבת דף הבית. ברירת המחדל: **לא מסומן** (רק דף הבית).
 - אם נשאר מסד שבור (חסר `config.version`) — ריקון וניסיון חוזר אוטומטי.
+- אחרי ההעתקה נשארים אורח ומנהל אחד: שם משתמש `admin`, סיסמה `Admin123!` (התחברות ידנית).
+- קישורי OAuth (`auth_oauth2_linked_login`) של האב נמחקים, כדי ש־SSO לא ייכשל עם `alreadylinked`. דייר שכבר הוקם מנוקה בריצת cron הבאה (רק קישורים למשתמש שנמחק).
 
 **הקמה ברקע:** יצירת דייר חדש **לא חוסמת את הדפדפן**. לאחר שמירה הסטטוס הוא «בתור». ההקמה רצה במשימה המתוזמנת `sync_parent_admins` (דרך `php admin/cli/cron.php`), גם אם תור ה־adhoc ריק. בעמוד ניהול דיירים מוצגת עמודת **הקמה** (בתור / בתהליך / הושלם / נכשל).
 
@@ -234,6 +236,7 @@ php local/multitenancy/cli/upgrade_tenants.php --run
 | `duplicate key` / `mdl_*_pkey` ב־PostgreSQL | ה־sequence נשאר מאחור אחרי `pg_dump\|psql` או העתקת PHP. כניסה לניהול דיירים או `cron.php` מאפסת sequences ל־`MAX(id)`. |
 | סטטוס «בתהליך» אבל יש `config.version` | ההקמה נעצרה אחרי השכפול (לפני סיום סנכרון ההגדרות). ניהול דיירים / דיאגנוזה / cron מסמנים את הדייר כהושלם אם המסד כבר מותקן. |
 | `PostgreSQL connection has already been closed` אחרי TEMPLATE | `CREATE DATABASE WITH TEMPLATE` מנתק את חיבור האב. אחרי פריסה הריצו שוב את `sync_parent_admins`: החיבור נפתח מחדש, ודייר שהמסד שלו כבר מותקן מסומן כהושלם. |
+| `alreadylinked` בהתחברות OAuth לדייר | קישור SSO הועתק מהאב ומצביע על משתמש שכבר לא קיים. cron מוחק קישורים כאלה. אפשר גם למחוק ידנית את השורה ב־`mdl_auth_oauth2_linked_login` של הדייר ולהיכנס שוב. |
 
 ---
 

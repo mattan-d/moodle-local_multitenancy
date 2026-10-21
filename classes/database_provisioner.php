@@ -1559,6 +1559,7 @@ class database_provisioner {
             $conn->close();
             return ['state' => 'error', 'detail' => 'Failed to clean copied users: ' . $err];
         }
+        self::mysql_delete_oauth2_linked_logins($conn, $prefix, true);
         if (!$conn->query("UPDATE {$usertable} SET auth='manual', username='admin', password='{$hash}', deleted=0, suspended=0, confirmed=1 WHERE id=2")) {
             $err = $conn->error;
             $conn->close();
@@ -1603,6 +1604,7 @@ class database_provisioner {
             pg_close($conn);
             return ['state' => 'error', 'detail' => 'Failed to clean copied users: ' . $err];
         }
+        self::pgsql_delete_oauth2_linked_logins($conn, $prefix, true);
         if (!@pg_query_params($conn, "UPDATE {$usertable} SET auth='manual', username='admin', password=$1, deleted=0, suspended=0, confirmed=1 WHERE id=2", [$hash])) {
             $err = pg_last_error($conn);
             pg_close($conn);
@@ -1616,6 +1618,143 @@ class database_provisioner {
         @pg_query($conn, "TRUNCATE TABLE {$sessiontable}");
         pg_close($conn);
         return ['state' => 'ok', 'detail' => ''];
+    }
+
+    /**
+     * Drop OAuth2 account links copied from the parent.
+     *
+     * Those rows point at users removed during provisioning. The next SSO login then
+     * finds the external account already linked and throws auth_oauth2/alreadylinked.
+     *
+     * @param bool $all True: delete every link. False: only links whose user is missing or deleted.
+     * @return int Rows deleted, or 0 when the table is absent.
+     */
+    public static function delete_oauth2_linked_logins(\stdClass $tenant, bool $all): int {
+        $dbtype = (string) ($tenant->dbtype ?? '');
+        $prefix = (string) ($tenant->dbprefix ?? 'mdl_');
+        $dbname = (string) ($tenant->dbname ?? '');
+        if ($dbname === '') {
+            return 0;
+        }
+        if (in_array($dbtype, self::POSTGRES_FAMILY, true)) {
+            $conn = postgres_helper::connect_tenant($tenant, $dbname);
+            if (!$conn) {
+                return 0;
+            }
+            $deleted = self::pgsql_delete_oauth2_linked_logins($conn, $prefix, $all);
+            pg_close($conn);
+            return $deleted;
+        }
+        if (!in_array($dbtype, self::MYSQL_FAMILY, true)) {
+            return 0;
+        }
+        $conn = @new \mysqli(
+            (string) ($tenant->dbhost ?? ''),
+            (string) ($tenant->dbuser ?? ''),
+            (string) ($tenant->dbpass ?? ''),
+            $dbname
+        );
+        if ($conn->connect_errno) {
+            return 0;
+        }
+        $deleted = self::mysql_delete_oauth2_linked_logins($conn, $prefix, $all);
+        $conn->close();
+        return $deleted;
+    }
+
+    /**
+     * Remove stale OAuth2 links on every enabled, provisioned tenant.
+     *
+     * @return array{tenants:int, deleted:int}
+     */
+    public static function repair_all_oauth2_linked_logins(): array {
+        global $DB;
+
+        $summary = ['tenants' => 0, 'deleted' => 0];
+        $tenants = $DB->get_records('local_multitenancy_tenant', ['enabled' => 1], 'id ASC');
+        foreach ($tenants as $tenant) {
+            $status = (string) ($tenant->provisionstatus ?? '');
+            if ($status !== '' && $status !== tenant_provisioner::STATUS_COMPLETE) {
+                continue;
+            }
+            $summary['tenants']++;
+            $deleted = self::delete_oauth2_linked_logins($tenant, false);
+            $summary['deleted'] += $deleted;
+            if ($deleted > 0) {
+                provision_logger::log_tenant(
+                    $tenant,
+                    'oauth2',
+                    'Removed ' . $deleted . ' OAuth2 link(s) pointing at missing users'
+                );
+            }
+        }
+        return $summary;
+    }
+
+    /**
+     * @param \mysqli $conn
+     * @param string $prefix
+     * @param bool $all
+     * @return int
+     */
+    private static function mysql_delete_oauth2_linked_logins(\mysqli $conn, string $prefix, bool $all): int {
+        $table = $prefix . 'auth_oauth2_linked_login';
+        $usertable = $prefix . 'user';
+        $exists = $conn->query(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = '" .
+            $conn->real_escape_string($table) . "'"
+        );
+        if (!$exists || $exists->num_rows === 0) {
+            if ($exists) {
+                $exists->close();
+            }
+            return 0;
+        }
+        $exists->close();
+        $qtable = '`' . str_replace('`', '``', $table) . '`';
+        $quser = '`' . str_replace('`', '``', $usertable) . '`';
+        $sql = $all
+            ? "DELETE FROM {$qtable}"
+            : "DELETE FROM {$qtable} WHERE userid NOT IN (SELECT id FROM {$quser} WHERE deleted = 0)";
+        if (!$conn->query($sql)) {
+            return 0;
+        }
+        return (int) $conn->affected_rows;
+    }
+
+    /**
+     * @param resource $conn
+     * @param string $prefix
+     * @param bool $all
+     * @return int
+     */
+    private static function pgsql_delete_oauth2_linked_logins($conn, string $prefix, bool $all): int {
+        $table = $prefix . 'auth_oauth2_linked_login';
+        $usertable = $prefix . 'user';
+        $exists = @pg_query_params(
+            $conn,
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1",
+            [$table]
+        );
+        if (!$exists || pg_num_rows($exists) === 0) {
+            if ($exists) {
+                pg_free_result($exists);
+            }
+            return 0;
+        }
+        pg_free_result($exists);
+        $qtable = postgres_helper::quote_ident($table);
+        $quser = postgres_helper::quote_ident($usertable);
+        $sql = $all
+            ? "DELETE FROM {$qtable}"
+            : "DELETE FROM {$qtable} WHERE userid NOT IN (SELECT id FROM {$quser} WHERE deleted = 0)";
+        $res = @pg_query($conn, $sql);
+        if (!$res) {
+            return 0;
+        }
+        $deleted = pg_affected_rows($res);
+        pg_free_result($res);
+        return (int) $deleted;
     }
 
     /**

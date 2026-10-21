@@ -75,6 +75,10 @@ class sync_parent_admins extends \core\task\scheduled_task {
         if ($seq['fixed'] > 0) {
             mtrace('local_multitenancy: reset ' . $seq['fixed'] . ' PostgreSQL sequence(s) on ' . $seq['tenants'] . ' tenant(s).');
         }
+        $oauth = \local_multitenancy\database_provisioner::repair_all_oauth2_linked_logins();
+        if ($oauth['deleted'] > 0) {
+            mtrace('local_multitenancy: removed ' . $oauth['deleted'] . ' stale OAuth2 link(s).');
+        }
 
         $summary = \local_multitenancy\admin_sync::sync_all_enabled_tenants();
         mtrace('local_multitenancy: parent admin sync finished.');
