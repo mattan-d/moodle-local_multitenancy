@@ -109,22 +109,31 @@ class tenant_provisioner {
 
         $stuck = $DB->get_records('local_multitenancy_tenant', ['provisionstatus' => self::STATUS_PROCESSING]);
         $healed = 0;
-        $now = time();
+        $lockfactory = \core\lock\lock_config::get_lock_factory('local_multitenancy');
         foreach ($stuck as $tenant) {
-            // Leave a just-started task alone.
-            if (!empty($tenant->timemodified) && ($now - (int) $tenant->timemodified) < 90) {
+            // Skip a clone that is still running in another process.
+            $lock = $lockfactory->get_lock('provision_' . $tenant->id, 0);
+            if (!$lock) {
                 continue;
             }
-            if (!database_provisioner::moodle_is_installed($tenant)) {
-                continue;
+            try {
+                if (!database_provisioner::moodle_is_installed($tenant)) {
+                    continue;
+                }
+                self::set_status((int) $tenant->id, self::STATUS_COMPLETE, null);
+                provision_logger::log_tenant(
+                    $tenant,
+                    'heal',
+                    'Marked complete: database is installed but status was stuck on processing'
+                );
+                $healed++;
+            } finally {
+                try {
+                    $lock->release();
+                } catch (\Throwable $e) {
+                    mtrace('local_multitenancy: heal lock release skipped: ' . $e->getMessage());
+                }
             }
-            self::set_status((int) $tenant->id, self::STATUS_COMPLETE, null);
-            provision_logger::log_tenant(
-                $tenant,
-                'heal',
-                'Marked complete: database is installed but status was stuck on processing'
-            );
-            $healed++;
         }
         if ($healed > 0) {
             registry_writer::sync();
@@ -203,7 +212,13 @@ class tenant_provisioner {
         try {
             return self::run_locked($tenantid, $initdbfromparent, $copycourses);
         } finally {
-            $lock->release();
+            // TEMPLATE clone terminates the parent session, including this advisory lock.
+            database_provisioner::reconnect_parent_moodle_db();
+            try {
+                $lock->release();
+            } catch (\Throwable $e) {
+                mtrace('local_multitenancy: provision lock release skipped: ' . $e->getMessage());
+            }
         }
     }
 
@@ -282,6 +297,9 @@ class tenant_provisioner {
             return self::fail($tenantid, $err);
         }
         provision_logger::log_tenant($tenant, 'verify', 'config.version present — Moodle install OK');
+
+        // TEMPLATE clone kills the parent backend. Reopen it before writing status.
+        database_provisioner::reconnect_parent_moodle_db();
 
         // The database is usable now. Mark complete before slower post-steps so a timeout
         // during settings sync cannot leave the tenant stuck on "processing".

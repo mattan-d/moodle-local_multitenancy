@@ -416,31 +416,58 @@ class database_provisioner {
     /**
      * Reconnect Moodle's global $DB after pg_terminate_backend on the parent database.
      *
-     * @return void
+     * dispose() must not be used: it permanently marks the driver disposed and nulls
+     * temptables. connect() also refuses to open a new handle while the read-replica
+     * trait still stores the terminated one in $dbhwrite.
+     *
+     * @return bool True when the parent connection is usable.
      */
-    private static function reconnect_parent_moodle_db(): void {
+    public static function reconnect_parent_moodle_db(): bool {
         global $CFG, $DB;
         if (!isset($DB) || !is_object($DB)) {
-            return;
+            return false;
         }
-        try {
-            if (method_exists($DB, 'dispose')) {
-                $DB->dispose();
+
+        $ref = new \ReflectionObject($DB);
+        $handle = null;
+        if ($ref->hasProperty('pgsql')) {
+            $prop = $ref->getProperty('pgsql');
+            $prop->setAccessible(true);
+            $handle = $prop->getValue($DB);
+        }
+        if ($handle) {
+            try {
+                if (pg_connection_status($handle) === PGSQL_CONNECTION_OK) {
+                    return true;
+                }
+            } catch (\Throwable $e) {
+                // Server already closed this handle (pg_terminate_backend).
             }
-        } catch (\Throwable $e) {
-            // Ignore dispose errors on a dead connection.
+        } else {
+            return false;
         }
+
         try {
+            foreach (['dbhwrite', 'dbhreadonly', 'pgsql'] as $name) {
+                if (!$ref->hasProperty($name)) {
+                    continue;
+                }
+                $prop = $ref->getProperty($name);
+                $prop->setAccessible(true);
+                $prop->setValue($DB, null);
+            }
             $DB->connect(
-                $CFG->dbhost,
-                $CFG->dbuser,
-                $CFG->dbpass,
-                $CFG->dbname,
+                (string) $CFG->dbhost,
+                (string) $CFG->dbuser,
+                (string) $CFG->dbpass,
+                (string) $CFG->dbname,
                 $CFG->prefix,
-                !empty($CFG->dboptions) && is_array($CFG->dboptions) ? $CFG->dboptions : []
+                (!empty($CFG->dboptions) && is_array($CFG->dboptions)) ? $CFG->dboptions : null
             );
+            return true;
         } catch (\Throwable $e) {
-            // Provisioner will fail on the next parent DB write if reconnect fails.
+            mtrace('local_multitenancy: parent DB reconnect failed: ' . $e->getMessage());
+            return false;
         }
     }
 

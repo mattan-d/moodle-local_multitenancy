@@ -233,6 +233,7 @@ php local/multitenancy/cli/upgrade_tenants.php --run
 | אתחול DB נכשל | הרשאות DB; ב־pgsql: בעלות על מסד האב ל־TEMPLATE, או `pg_dump` בגרסה ≥ לשרת (לא 13 מול 15). לוג בדיאגנוזה. |
 | `duplicate key` / `mdl_*_pkey` ב־PostgreSQL | ה־sequence נשאר מאחור אחרי `pg_dump\|psql` או העתקת PHP. כניסה לניהול דיירים או `cron.php` מאפסת sequences ל־`MAX(id)`. |
 | סטטוס «בתהליך» אבל יש `config.version` | ההקמה נעצרה אחרי השכפול (לפני סיום סנכרון ההגדרות). ניהול דיירים / דיאגנוזה / cron מסמנים את הדייר כהושלם אם המסד כבר מותקן. |
+| `PostgreSQL connection has already been closed` אחרי TEMPLATE | `CREATE DATABASE WITH TEMPLATE` מנתק את חיבור האב. אחרי פריסה הריצו שוב את `sync_parent_admins`: החיבור נפתח מחדש, ודייר שהמסד שלו כבר מותקן מסומן כהושלם. |
 
 ---
 
