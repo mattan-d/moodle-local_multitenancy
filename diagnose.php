@@ -82,6 +82,12 @@ if ($action === 'reprovision' && confirm_sesskey()) {
     redirect($returnurl);
 }
 
+$healed = \local_multitenancy\tenant_provisioner::heal_stuck_processing();
+if ($healed > 0) {
+    $tenant = $DB->get_record('local_multitenancy_tenant', ['id' => $id], '*', MUST_EXIST);
+    \core\notification::success(get_string('provision_healed', 'local_multitenancy', $healed));
+}
+
 $results = gateway_diagnostic::run((string) $tenant->shortcode);
 
 $haderror = false;

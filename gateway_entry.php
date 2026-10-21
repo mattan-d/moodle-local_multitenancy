@@ -101,6 +101,8 @@ function local_multitenancy_gateway_find_cfgroot(string $start): string {
 }
 
 /**
+ * Read a simple quoted $CFG->name = '...'; assignment.
+ *
  * @param string $configsrc
  * @param string $name
  * @return string
@@ -111,6 +113,77 @@ function local_multitenancy_gateway_parse_cfg_string(string $configsrc, string $
         return (string) $m[1];
     }
     return '';
+}
+
+/**
+ * Evaluate config.php only up to Moodle setup / multitenancy bootstrap.
+ * Handles dataroot built with __DIR__, concatenation, or getenv() — not only a quoted literal.
+ *
+ * @param string $cfgroot Directory that contains config.php
+ * @return array{dataroot:string, wwwroot:string, error:string}
+ */
+function local_multitenancy_gateway_load_cfg(string $cfgroot): array {
+    $empty = ['dataroot' => '', 'wwwroot' => '', 'error' => ''];
+    $path = $cfgroot . DIRECTORY_SEPARATOR . 'config.php';
+    $src = @file_get_contents($path);
+    if (!is_string($src) || $src === '') {
+        $empty['error'] = 'cannot read config.php';
+        return $empty;
+    }
+
+    $src = preg_replace('/^\s*<\?php\s*/', '', $src, 1) ?? $src;
+    $src = preg_replace('/\bdeclare\s*\(\s*strict_types\s*=\s*1\s*\)\s*;/', '', $src) ?? $src;
+    $src = preg_replace('/\b__DIR__\b/', var_export($cfgroot, true), $src) ?? $src;
+    $src = preg_replace('/\b__FILE__\b/', var_export($path, true), $src) ?? $src;
+
+    $cut = null;
+    $markers = [
+        '/local_multitenancy_bootstrap\s*\(/',
+        '/[\'"][^\'"]*\/lib\/setup\.php[\'"]/',
+        '/[\'"][^\'"]*\/local\/multitenancy\/bootstrap\.php[\'"]/',
+    ];
+    foreach ($markers as $marker) {
+        if (!preg_match($marker, $src, $m, PREG_OFFSET_CAPTURE)) {
+            continue;
+        }
+        $pos = (int) $m[0][1];
+        $before = strrpos(substr($src, 0, $pos), 'require');
+        if ($before !== false) {
+            $pos = $before;
+        }
+        if ($cut === null || $pos < $cut) {
+            $cut = $pos;
+        }
+    }
+    if ($cut !== null) {
+        $src = substr($src, 0, $cut);
+    }
+
+    $cfg = null;
+    $error = '';
+    $handler = static function (int $severity, string $message): bool {
+        if (!(error_reporting() & $severity)) {
+            return false;
+        }
+        throw new ErrorException($message, 0, $severity);
+    };
+    set_error_handler($handler);
+    try {
+        eval($src);
+        if (isset($CFG) && is_object($CFG)) {
+            $cfg = $CFG;
+        }
+    } catch (Throwable $e) {
+        $error = $e->getMessage();
+    }
+    restore_error_handler();
+
+    $dataroot = ($cfg && !empty($cfg->dataroot)) ? (string) $cfg->dataroot : '';
+    $wwwroot = ($cfg && !empty($cfg->wwwroot)) ? (string) $cfg->wwwroot : '';
+    if ($dataroot === '' && $error === '') {
+        $error = 'dataroot was not set before setup.php';
+    }
+    return ['dataroot' => $dataroot, 'wwwroot' => $wwwroot, 'error' => $error];
 }
 
 /**
@@ -185,11 +258,19 @@ if ($cfgroot === '') {
 
 $configsrc = (string) @file_get_contents($cfgroot . '/config.php');
 if ($configsrc === '') {
-    local_multitenancy_gateway_fail('Multitenancy gateway: cannot read config.php.');
+    local_multitenancy_gateway_fail('Multitenancy gateway: cannot read config.php at ' . $cfgroot . '/config.php');
 }
 
-$dataroot = local_multitenancy_gateway_parse_cfg_string($configsrc, 'dataroot');
-$wwwrootfromcfg = local_multitenancy_gateway_parse_cfg_string($configsrc, 'wwwroot');
+$loadedcfg = local_multitenancy_gateway_load_cfg($cfgroot);
+$dataroot = $loadedcfg['dataroot'];
+$wwwrootfromcfg = $loadedcfg['wwwroot'];
+if ($dataroot === '') {
+    $dataroot = local_multitenancy_gateway_parse_cfg_string($configsrc, 'dataroot');
+}
+if ($wwwrootfromcfg === '') {
+    $wwwrootfromcfg = local_multitenancy_gateway_parse_cfg_string($configsrc, 'wwwroot');
+}
+$cfgloaderror = ($dataroot === '') ? $loadedcfg['error'] : '';
 
 local_multitenancy_gateway_step('config-parsed');
 
@@ -220,7 +301,10 @@ if (preg_match("/define\s*\(\s*['\"]MULTITENANCY_REGISTRY_DIR['\"]\s*,\s*['\"]([
 if ($registrydir === '' || !is_dir($registrydir)) {
     local_multitenancy_gateway_fail(
         "Multitenancy gateway: registry directory missing.\n" .
+        "config.php=" . $cfgroot . "/config.php\n" .
         "dataroot=" . ($dataroot !== '' ? $dataroot : '(not parsed from config.php)') . "\n" .
+        ($cfgloaderror !== '' ? "detail=" . $cfgloaderror . "\n" : '') .
+        "registrydir=" . ($registrydir !== '' ? $registrydir : '(empty)') . "\n" .
         "Open parent Manage tenants to regenerate registry.\n",
         503
     );

@@ -52,6 +52,10 @@ class sync_parent_admins extends \core\task\scheduled_task {
         if ($retried > 0) {
             mtrace('local_multitenancy: auto-retried incomplete provisioning for ' . $retried . ' tenant(s).');
         }
+        $healed = \local_multitenancy\tenant_provisioner::heal_stuck_processing();
+        if ($healed > 0) {
+            mtrace('local_multitenancy: marked ' . $healed . ' stuck tenant(s) complete.');
+        }
 
         // Tenant DB upgrades via parent cron (admin/cli/cron.php) — run CLI upgrade now,
         // do not only queue adhoc tasks (those can sit if adhoc processing is delayed).
@@ -61,6 +65,11 @@ class sync_parent_admins extends \core\task\scheduled_task {
         mtrace('  ran: ' . $up['ran'] . ', ok: ' . $up['ok'] . ', fail: ' . $up['fail'] . ', skipped: ' . $up['skipped']);
         foreach ($up['messages'] as $line) {
             mtrace('  - ' . $line);
+        }
+
+        $seq = \local_multitenancy\database_provisioner::repair_all_pgsql_sequences();
+        if ($seq['fixed'] > 0) {
+            mtrace('local_multitenancy: reset ' . $seq['fixed'] . ' PostgreSQL sequence(s) on ' . $seq['tenants'] . ' tenant(s).');
         }
 
         $summary = \local_multitenancy\admin_sync::sync_all_enabled_tenants();

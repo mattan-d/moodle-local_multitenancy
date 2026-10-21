@@ -184,6 +184,19 @@ class database_provisioner {
         if ($adminreset['state'] !== 'ok') {
             return ['state' => 'error', 'detail' => $adminreset['detail']];
         }
+        if ((string) ($tenant->dbtype ?? '') === 'pgsql') {
+            $seq = self::repair_pgsql_sequences($tenant);
+            if (!$seq['ok']) {
+                return ['state' => 'error', 'detail' => 'PostgreSQL sequence repair failed: ' . $seq['detail']];
+            }
+            if ($seq['fixed'] > 0) {
+                provision_logger::log_tenant(
+                    $tenant,
+                    'sequences',
+                    'Reset ' . $seq['fixed'] . ' PostgreSQL sequence(s) to MAX(id)'
+                );
+            }
+        }
         return self::verify_after_clone($tenant, $tenantdbname);
     }
 
@@ -913,45 +926,145 @@ class database_provisioner {
     }
 
     /**
+     * Align every Moodle serial sequence with MAX(column) so the next INSERT does not reuse an id.
+     * pg_dump|psql and the PHP clone often leave sequences at 1 while copied rows already use those ids.
+     *
+     * @param \stdClass $tenant
+     * @return array{ok:bool, fixed:int, detail:string}
+     */
+    public static function repair_pgsql_sequences(\stdClass $tenant): array {
+        if ((string) ($tenant->dbtype ?? '') !== 'pgsql') {
+            return ['ok' => true, 'fixed' => 0, 'detail' => 'skipped'];
+        }
+        if (!function_exists('pg_connect')) {
+            return ['ok' => false, 'fixed' => 0, 'detail' => 'pgsql extension not loaded'];
+        }
+        $dbname = (string) ($tenant->dbname ?? '');
+        $conn = postgres_helper::connect_tenant($tenant, $dbname);
+        if (!$conn) {
+            return ['ok' => false, 'fixed' => 0, 'detail' => 'connect failed'];
+        }
+        $fixed = self::pgsql_reset_sequences($conn, (string) ($tenant->dbprefix ?? 'mdl_'));
+        pg_close($conn);
+        return ['ok' => true, 'fixed' => $fixed, 'detail' => ''];
+    }
+
+    /**
+     * Repair sequences on every enabled PostgreSQL tenant.
+     *
+     * @return array{tenants:int, fixed:int}
+     */
+    public static function repair_all_pgsql_sequences(): array {
+        global $DB;
+
+        $summary = ['tenants' => 0, 'fixed' => 0];
+        $tenants = $DB->get_records('local_multitenancy_tenant', ['enabled' => 1], 'id ASC');
+        foreach ($tenants as $tenant) {
+            if ((string) ($tenant->dbtype ?? '') !== 'pgsql') {
+                continue;
+            }
+            $summary['tenants']++;
+            $result = self::repair_pgsql_sequences($tenant);
+            if ($result['ok']) {
+                $summary['fixed'] += (int) $result['fixed'];
+                if ($result['fixed'] > 0) {
+                    provision_logger::log_tenant(
+                        $tenant,
+                        'sequences',
+                        'Reset ' . $result['fixed'] . ' PostgreSQL sequence(s) to MAX(id)'
+                    );
+                }
+            } else {
+                provision_logger::log_tenant($tenant, 'sequences', $result['detail'], 'error');
+            }
+        }
+        return $summary;
+    }
+
+    /**
      * @param resource $conn
      * @param string $prefix
-     * @return void
+     * @return int Number of sequences that were behind MAX(id) and were advanced.
      */
-    private static function pgsql_reset_sequences($conn, string $prefix): void {
+    private static function pgsql_reset_sequences($conn, string $prefix): int {
         $res = @pg_query(
             $conn,
-            "SELECT c.relname AS seq, a.attname AS col, t.relname AS tbl
-               FROM pg_class c
-               JOIN pg_depend d ON d.objid = c.oid AND d.deptype = 'a'
-               JOIN pg_class t ON t.oid = d.refobjid
-               JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
-               JOIN pg_namespace n ON n.oid = c.relnamespace
-              WHERE c.relkind = 'S' AND n.nspname = 'public'"
+            "SELECT table_name, column_name, column_default
+               FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND column_default LIKE 'nextval(%'"
         );
         if (!$res) {
-            return;
+            return 0;
         }
+        $fixed = 0;
         while ($row = pg_fetch_assoc($res)) {
-            $seq = (string) ($row['seq'] ?? '');
-            $col = (string) ($row['col'] ?? '');
-            $tbl = (string) ($row['tbl'] ?? '');
-            if ($seq === '' || $col === '' || $tbl === '') {
+            $table = (string) ($row['table_name'] ?? '');
+            $column = (string) ($row['column_name'] ?? '');
+            $default = (string) ($row['column_default'] ?? '');
+            if ($table === '' || $column === '' || ($prefix !== '' && strpos($table, $prefix) !== 0)) {
                 continue;
             }
-            if ($prefix !== '' && strpos($tbl, $prefix) !== 0) {
+            if (!preg_match("/nextval\\('([^']+)'/", $default, $match)) {
                 continue;
             }
-            $qtbl = postgres_helper::quote_ident($tbl);
-            $qcol = postgres_helper::quote_ident($col);
-            $qseq = postgres_helper::quote_ident($seq);
+            $seq = $match[1];
+            if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$/', $seq)) {
+                continue;
+            }
+            $qtbl = postgres_helper::quote_ident($table);
+            $qcol = postgres_helper::quote_ident($column);
+            $qseq = self::pgsql_quote_qualified($seq);
+
             @pg_query($conn, 'ALTER SEQUENCE ' . $qseq . ' OWNED BY ' . $qtbl . '.' . $qcol);
-            @pg_query_params(
-                $conn,
-                'SELECT setval($1::regclass, COALESCE((SELECT MAX(' . $qcol . ') FROM ' . $qtbl . '), 1), true)',
-                [$seq]
-            );
+
+            $maxres = @pg_query($conn, 'SELECT MAX(' . $qcol . ') AS m FROM ' . $qtbl);
+            if (!$maxres) {
+                continue;
+            }
+            $maxrow = pg_fetch_assoc($maxres);
+            pg_free_result($maxres);
+            $max = $maxrow['m'] ?? null;
+            if ($max === null || $max === '') {
+                continue;
+            }
+            $max = (int) $max;
+
+            $cur = @pg_query($conn, 'SELECT last_value, is_called FROM ' . $qseq);
+            $behind = true;
+            if ($cur && ($currow = pg_fetch_assoc($cur))) {
+                $last = (int) $currow['last_value'];
+                $called = ($currow['is_called'] === 't' || $currow['is_called'] === true || $currow['is_called'] === '1');
+                // Next nextval is last+1 when is_called, otherwise last. Behind if that value is <= MAX(id).
+                $next = $called ? ($last + 1) : $last;
+                $behind = $next <= $max;
+            }
+            if ($cur) {
+                pg_free_result($cur);
+            }
+            if (!$behind) {
+                continue;
+            }
+            $seqliteral = "'" . str_replace("'", "''", $seq) . "'";
+            if (@pg_query($conn, 'SELECT setval(' . $seqliteral . '::regclass, ' . $max . ', true)')) {
+                $fixed++;
+            }
         }
         pg_free_result($res);
+        return $fixed;
+    }
+
+    /**
+     * @param string $qualified public.name or name
+     * @return string
+     */
+    private static function pgsql_quote_qualified(string $qualified): string {
+        $parts = explode('.', $qualified);
+        $quoted = [];
+        foreach ($parts as $part) {
+            $quoted[] = postgres_helper::quote_ident($part);
+        }
+        return implode('.', $quoted);
     }
 
     /**

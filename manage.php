@@ -41,6 +41,16 @@ $autoretried = \local_multitenancy\tenant_provisioner::retry_incomplete_failures
 if ($autoretried > 0) {
     \core\notification::info(get_string('diagnose_autoretry', 'local_multitenancy', $autoretried));
 }
+$healed = \local_multitenancy\tenant_provisioner::heal_stuck_processing();
+if ($healed > 0) {
+    \core\notification::success(get_string('provision_healed', 'local_multitenancy', $healed));
+}
+
+// Fix PostgreSQL sequences left behind by pg_dump/psql or PHP clone (duplicate key on insert).
+$seqrepair = \local_multitenancy\database_provisioner::repair_all_pgsql_sequences();
+if ($seqrepair['fixed'] > 0) {
+    \core\notification::info(get_string('sequences_repaired', 'local_multitenancy', $seqrepair['fixed']));
+}
 
 // Keep parent versions hash fresh; queue tenant DB upgrades when codebase changed.
 $upgradequeued = \local_multitenancy\tenant_upgrader::queue_if_parent_changed();

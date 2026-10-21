@@ -99,6 +99,41 @@ class tenant_provisioner {
     }
 
     /**
+     * Tenants left on "processing" after the DB clone already finished (task killed during
+     * settings sync) are marked complete so the gateway can open.
+     *
+     * @return int Number of tenants healed.
+     */
+    public static function heal_stuck_processing(): int {
+        global $DB;
+
+        $stuck = $DB->get_records('local_multitenancy_tenant', ['provisionstatus' => self::STATUS_PROCESSING]);
+        $healed = 0;
+        $now = time();
+        foreach ($stuck as $tenant) {
+            // Leave a just-started task alone.
+            if (!empty($tenant->timemodified) && ($now - (int) $tenant->timemodified) < 90) {
+                continue;
+            }
+            if (!database_provisioner::moodle_is_installed($tenant)) {
+                continue;
+            }
+            self::set_status((int) $tenant->id, self::STATUS_COMPLETE, null);
+            provision_logger::log_tenant(
+                $tenant,
+                'heal',
+                'Marked complete: database is installed but status was stuck on processing'
+            );
+            $healed++;
+        }
+        if ($healed > 0) {
+            registry_writer::sync();
+            gateway_manager::sync();
+        }
+        return $healed;
+    }
+
+    /**
      * Run full provisioning for one tenant (called from adhoc task).
      *
      * @param int $tenantid
@@ -172,9 +207,18 @@ class tenant_provisioner {
         }
         provision_logger::log_tenant($tenant, 'verify', 'config.version present — Moodle install OK');
 
+        // The database is usable now. Mark complete before slower post-steps so a timeout
+        // during settings sync cannot leave the tenant stuck on "processing".
+        self::set_status($tenantid, self::STATUS_COMPLETE, null);
+        registry_writer::sync();
+
         // Propagate parent site-administration settings and language packs to the tenant,
         // independent of course data.
-        $syncresult = admin_sync::sync_tenant($tenant);
+        try {
+            $syncresult = admin_sync::sync_tenant($tenant);
+        } catch (\Throwable $e) {
+            $syncresult = ['state' => 'error', 'detail' => $e->getMessage()];
+        }
         if ($syncresult['state'] === 'synced') {
             $messages[] = get_string('settingssynced', 'local_multitenancy', $syncresult['detail']);
             provision_logger::log_tenant($tenant, 'admin_sync', $syncresult['detail']);
@@ -182,9 +226,6 @@ class tenant_provisioner {
             $messages[] = get_string('settingssyncfailed', 'local_multitenancy', $syncresult['detail']);
             provision_logger::log_tenant($tenant, 'admin_sync', $syncresult['detail'], 'error');
         }
-
-        // Mark complete in DB before writing registry so gateway sees the ready status.
-        self::set_status($tenantid, self::STATUS_COMPLETE, null);
 
         gateway_manager::sync();
         if (!registry_writer::sync()) {
