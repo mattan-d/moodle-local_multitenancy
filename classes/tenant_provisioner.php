@@ -134,7 +134,60 @@ class tenant_provisioner {
     }
 
     /**
-     * Run full provisioning for one tenant (called from adhoc task).
+     * Provision tenants still on "pending" inside the parent scheduled task.
+     * Creating a tenant queues an adhoc task, but that queue can be empty or delayed;
+     * cron must still finish the clone.
+     *
+     * @return int Number of tenants this call tried to provision.
+     */
+    public static function resume_pending_provisioning(): int {
+        global $DB;
+
+        $pending = $DB->get_records('local_multitenancy_tenant', [
+            'enabled' => 1,
+            'provisionstatus' => self::STATUS_PENDING,
+        ], 'id ASC');
+        $ran = 0;
+        foreach ($pending as $tenant) {
+            $copycourses = self::queued_copycourses((int) $tenant->id);
+            mtrace('local_multitenancy: provisioning pending tenant ' . $tenant->shortcode);
+            $result = self::run((int) $tenant->id, true, $copycourses);
+            if (!$result['ok']) {
+                mtrace('local_multitenancy: provision failed for ' . $tenant->shortcode . ': ' . $result['detail']);
+            } else if ($result['detail'] === 'Provisioning already running') {
+                mtrace('local_multitenancy: provision already running for ' . $tenant->shortcode);
+            } else {
+                mtrace('local_multitenancy: provision complete for ' . $tenant->shortcode);
+            }
+            $ran++;
+        }
+        return $ran;
+    }
+
+    /**
+     * Copy-courses flag stored on the queued adhoc task, if one still exists.
+     *
+     * @param int $tenantid
+     * @return bool
+     */
+    private static function queued_copycourses(int $tenantid): bool {
+        global $DB;
+
+        $records = $DB->get_records('task_adhoc', [
+            'classname' => '\\local_multitenancy\\task\\provision_tenant',
+        ]);
+        foreach ($records as $record) {
+            $data = json_decode((string) ($record->customdata ?? ''));
+            if (!is_object($data) || (int) ($data->tenantid ?? 0) !== $tenantid) {
+                continue;
+            }
+            return !empty($data->copycourses);
+        }
+        return false;
+    }
+
+    /**
+     * Run full provisioning for one tenant (called from adhoc task or parent cron).
      *
      * @param int $tenantid
      * @param bool $initdbfromparent
@@ -142,9 +195,32 @@ class tenant_provisioner {
      * @return array{ok:bool, detail:string}
      */
     public static function run(int $tenantid, bool $initdbfromparent, bool $copycourses): array {
+        $lockfactory = \core\lock\lock_config::get_lock_factory('local_multitenancy');
+        $lock = $lockfactory->get_lock('provision_' . $tenantid, 0);
+        if (!$lock) {
+            return ['ok' => true, 'detail' => 'Provisioning already running'];
+        }
+        try {
+            return self::run_locked($tenantid, $initdbfromparent, $copycourses);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    /**
+     * @param int $tenantid
+     * @param bool $initdbfromparent
+     * @param bool $copycourses
+     * @return array{ok:bool, detail:string}
+     */
+    private static function run_locked(int $tenantid, bool $initdbfromparent, bool $copycourses): array {
         global $DB;
 
         $tenant = $DB->get_record('local_multitenancy_tenant', ['id' => $tenantid], '*', MUST_EXIST);
+        if ((string) ($tenant->provisionstatus ?? '') === self::STATUS_COMPLETE
+                && database_provisioner::moodle_is_installed($tenant)) {
+            return ['ok' => true, 'detail' => 'Already provisioned'];
+        }
         self::set_status($tenantid, self::STATUS_PROCESSING, null);
         provision_logger::log_tenant($tenant, 'start', 'Provisioning started (copycourses=' . ($copycourses ? '1' : '0') . ')');
 

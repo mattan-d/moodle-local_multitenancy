@@ -56,6 +56,10 @@ class sync_parent_admins extends \core\task\scheduled_task {
         if ($healed > 0) {
             mtrace('local_multitenancy: marked ' . $healed . ' stuck tenant(s) complete.');
         }
+        $resumed = \local_multitenancy\tenant_provisioner::resume_pending_provisioning();
+        if ($resumed > 0) {
+            mtrace('local_multitenancy: ran provisioning for ' . $resumed . ' pending tenant(s).');
+        }
 
         // Tenant DB upgrades via parent cron (admin/cli/cron.php) — run CLI upgrade now,
         // do not only queue adhoc tasks (those can sit if adhoc processing is delayed).

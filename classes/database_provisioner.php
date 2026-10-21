@@ -963,6 +963,10 @@ class database_provisioner {
             if ((string) ($tenant->dbtype ?? '') !== 'pgsql') {
                 continue;
             }
+            $status = (string) ($tenant->provisionstatus ?? '');
+            if ($status !== '' && $status !== tenant_provisioner::STATUS_COMPLETE) {
+                continue;
+            }
             $summary['tenants']++;
             $result = self::repair_pgsql_sequences($tenant);
             if ($result['ok']) {
