@@ -29,10 +29,14 @@
  */
 
 /** Cookie: tenant shortcode (must match gateway_manager::COOKIE_NAME). */
-define('LOCAL_MULTITENANCY_COOKIE', 'local_mt_sc');
+if (!defined('LOCAL_MULTITENANCY_COOKIE')) {
+    define('LOCAL_MULTITENANCY_COOKIE', 'local_mt_sc');
+}
 
 /** Cookie: public wwwroot derived from the gateway request (scheme + host + Moodle path prefix). */
-define('LOCAL_MULTITENANCY_WWWROOT_COOKIE', 'local_mt_wr');
+if (!defined('LOCAL_MULTITENANCY_WWWROOT_COOKIE')) {
+    define('LOCAL_MULTITENANCY_WWWROOT_COOKIE', 'local_mt_wr');
+}
 
 /**
  * Whether the current request is served over HTTPS (incl. common reverse-proxy / MAMP cases).

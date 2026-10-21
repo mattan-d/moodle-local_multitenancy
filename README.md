@@ -229,7 +229,7 @@ php local/multitenancy/cli/upgrade_tenants.php --run
 | מסך התקנת Moodle ב־gateway | Clone לא הושלם — המערכת אמורה לתקן אוטומטית; אל תריץ install ידנית. |
 | מסך שדרוג/בדיקת תוספים בדייר | אמור לא להופיע — הריצו `php local/multitenancy/cli/upgrade_tenants.php --run` או cron באב; בדקו לוג הקמה. |
 | דף לבן ב־gateway | ודאו stub **v8** + קובץ `gateway_entry.php` (ניהול דיירים / upgrade). ה־gateway לא אמור לטעון את `lib/setup.php`. |
-| `registry directory missing` ב־gateway | `$CFG->dataroot` ב־config.php לא היה מחרוזת פשוטה (למשל `__DIR__` / `getenv`). אחרי עדכון `gateway_entry.php` הערך מחושב בלי setup. ודאו ש־`{dataroot}/multitenancy` קיים (ניהול דיירים). |
+| `registry directory missing` ב־gateway | `$CFG->dataroot` לא נקרא (מחרוזת מורכבת, או אזהרת `Constant LOCAL_MULTITENANCY_COOKIE already defined` שקטעה את הקריאה). אחרי עדכון `gateway_entry.php` רעננו את הכתובת. ודאו ש־`{dataroot}/multitenancy` קיים (ניהול דיירים). |
 | אתחול DB נכשל | הרשאות DB; ב־pgsql: בעלות על מסד האב ל־TEMPLATE, או `pg_dump` בגרסה ≥ לשרת (לא 13 מול 15). לוג בדיאגנוזה. |
 | `duplicate key` / `mdl_*_pkey` ב־PostgreSQL | ה־sequence נשאר מאחור אחרי `pg_dump\|psql` או העתקת PHP. כניסה לניהול דיירים או `cron.php` מאפסת sequences ל־`MAX(id)`. |
 | סטטוס «בתהליך» אבל יש `config.version` | ההקמה נעצרה אחרי השכפול (לפני סיום סנכרון ההגדרות). ניהול דיירים / דיאגנוזה / cron מסמנים את הדייר כהושלם אם המסד כבר מותקן. |

@@ -47,13 +47,6 @@ register_shutdown_function(static function (): void {
 
 require_once(__DIR__ . '/wwwroot_lib.php');
 
-if (!defined('LOCAL_MULTITENANCY_COOKIE')) {
-    define('LOCAL_MULTITENANCY_COOKIE', 'local_mt_sc');
-}
-if (!defined('LOCAL_MULTITENANCY_WWWROOT_COOKIE')) {
-    define('LOCAL_MULTITENANCY_WWWROOT_COOKIE', 'local_mt_wr');
-}
-
 /**
  * @param string $message
  * @param int $status
@@ -136,21 +129,20 @@ function local_multitenancy_gateway_load_cfg(string $cfgroot): array {
     $src = preg_replace('/\b__DIR__\b/', var_export($cfgroot, true), $src) ?? $src;
     $src = preg_replace('/\b__FILE__\b/', var_export($path, true), $src) ?? $src;
 
+    // Stop before bootstrap/setup. [^;]* crosses newlines so a require split over
+    // several lines is removed too. Do not define cookie constants before this eval:
+    // bootstrap.php defines them, and a warning used to abort before $CFG was kept.
     $cut = null;
     $markers = [
-        '/local_multitenancy_bootstrap\s*\(/',
-        '/[\'"][^\'"]*\/lib\/setup\.php[\'"]/',
-        '/[\'"][^\'"]*\/local\/multitenancy\/bootstrap\.php[\'"]/',
+        '/\b(?:require|include)(?:_once)?\b[^;]*bootstrap\.php/s',
+        '/\blocal_multitenancy_bootstrap\s*\(/',
+        '/\b(?:require|include)(?:_once)?\b[^;]*\/lib\/setup\.php/s',
     ];
     foreach ($markers as $marker) {
         if (!preg_match($marker, $src, $m, PREG_OFFSET_CAPTURE)) {
             continue;
         }
         $pos = (int) $m[0][1];
-        $before = strrpos(substr($src, 0, $pos), 'require');
-        if ($before !== false) {
-            $pos = $before;
-        }
         if ($cut === null || $pos < $cut) {
             $cut = $pos;
         }
@@ -170,13 +162,14 @@ function local_multitenancy_gateway_load_cfg(string $cfgroot): array {
     set_error_handler($handler);
     try {
         eval($src);
-        if (isset($CFG) && is_object($CFG)) {
-            $cfg = $CFG;
-        }
     } catch (Throwable $e) {
         $error = $e->getMessage();
     }
     restore_error_handler();
+    // Keep assignments made before a later warning (for example a redefined constant).
+    if (isset($CFG) && is_object($CFG)) {
+        $cfg = $CFG;
+    }
 
     $dataroot = ($cfg && !empty($cfg->dataroot)) ? (string) $cfg->dataroot : '';
     $wwwroot = ($cfg && !empty($cfg->wwwroot)) ? (string) $cfg->wwwroot : '';
@@ -381,6 +374,13 @@ if ($publicwww === null || $publicwww === '' || !preg_match('#\Ahttps?://.#iu', 
 $publicwww = rtrim($publicwww, '/');
 
 local_multitenancy_gateway_step('redirect');
+
+if (!defined('LOCAL_MULTITENANCY_COOKIE')) {
+    define('LOCAL_MULTITENANCY_COOKIE', 'local_mt_sc');
+}
+if (!defined('LOCAL_MULTITENANCY_WWWROOT_COOKIE')) {
+    define('LOCAL_MULTITENANCY_WWWROOT_COOKIE', 'local_mt_wr');
+}
 
 local_multitenancy_gateway_set_cookie(LOCAL_MULTITENANCY_COOKIE, $code);
 local_multitenancy_gateway_set_cookie(LOCAL_MULTITENANCY_WWWROOT_COOKIE, rawurlencode($publicwww));
