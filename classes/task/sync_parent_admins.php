@@ -19,7 +19,7 @@ namespace local_multitenancy\task;
 defined('MOODLE_INTERNAL') || die();
 
 /**
- * Scheduled task (parent cron.php): sync settings + run tenant DB upgrades.
+ * Scheduled task (parent cron.php): sync settings, upgrade tenant DBs, run tenant cron.
  *
  * @package    local_multitenancy
  * @copyright  2026
@@ -78,6 +78,16 @@ class sync_parent_admins extends \core\task\scheduled_task {
         $oauth = \local_multitenancy\database_provisioner::repair_all_oauth2_linked_logins();
         if ($oauth['deleted'] > 0) {
             mtrace('local_multitenancy: removed ' . $oauth['deleted'] . ' stale OAuth2 link(s).');
+        }
+
+        // Scheduled tasks and adhoc work (course copy, backups) live in each tenant DB.
+        // Parent cron.php is the only crontab; it starts cron.php per tenant.
+        mtrace('local_multitenancy: running tenant crons...');
+        $crons = \local_multitenancy\tenant_cron::run_all();
+        mtrace('local_multitenancy: tenant crons finished.');
+        mtrace('  ran: ' . $crons['ran'] . ', ok: ' . $crons['ok'] . ', fail: ' . $crons['fail']);
+        foreach ($crons['messages'] as $line) {
+            mtrace('  - ' . $line);
         }
 
         $summary = \local_multitenancy\admin_sync::sync_all_enabled_tenants();

@@ -391,7 +391,7 @@ class tenant_upgrader {
      * @param string $shortcode
      * @return array<string, string>
      */
-    private static function build_process_env(string $shortcode): array {
+    public static function build_process_env(string $shortcode): array {
         $env = [];
         foreach ($_SERVER as $key => $value) {
             if (is_string($key) && is_string($value) && preg_match('/^[A-Z_][A-Z0-9_]*$/', $key)) {

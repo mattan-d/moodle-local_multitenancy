@@ -153,14 +153,16 @@ php admin/cli/cron.php
 
 ## שורת פקודה (CLI)
 
-לפני הרצת סקריפטי Moodle ב־CLI עבור דייר מסוים:
+cron של הדיירים **לא** מוגדר בנפרד. `php admin/cli/cron.php` על האב מריץ לכל דייר מופעל ומוכן את `admin/cli/cron.php` שלו (משימות מתוזמנות וגם משימות רקע כמו שכפול קורס). אין צורך ב־crontab או בכתובת cron לכל דייר.
+
+לפקודת CLI חד־פעמית על דייר מסוים (אבחון, לא לתזמון):
 
 ```bash
 export MOODLE_TENANT=קוד_הדייר
 php admin/cli/cron.php
 ```
 
-(או כל פקודת CLI אחרת.) ללא המשתנה — רץ בהקשר של האתר הראשי לפי `config.php`.
+ללא המשתנה — רץ בהקשר של האתר הראשי לפי `config.php`.
 
 ### אבחון Gateway (דף לבן וכו')
 
@@ -237,6 +239,7 @@ php local/multitenancy/cli/upgrade_tenants.php --run
 | סטטוס «בתהליך» אבל יש `config.version` | ההקמה נעצרה אחרי השכפול (לפני סיום סנכרון ההגדרות). ניהול דיירים / דיאגנוזה / cron מסמנים את הדייר כהושלם אם המסד כבר מותקן. |
 | `PostgreSQL connection has already been closed` אחרי TEMPLATE | `CREATE DATABASE WITH TEMPLATE` מנתק את חיבור האב. אחרי פריסה הריצו שוב את `sync_parent_admins`: החיבור נפתח מחדש, ודייר שהמסד שלו כבר מותקן מסומן כהושלם. |
 | `alreadylinked` בהתחברות OAuth לדייר | קישור SSO הועתק מהאב ומצביע על משתמש שכבר לא קיים. cron מוחק קישורים כאלה. אפשר גם למחוק ידנית את השורה ב־`mdl_auth_oauth2_linked_login` של הדייר ולהיכנס שוב. |
+| שכפול קורס נשאר «ממתין ל־cron» | השכפול הוא משימת רקע במסד **הדייר**. cron של האב מריץ עכשיו גם את cron של הדייר. אחרי פריסה: `php admin/cli/cron.php` על האב (או המשימה `sync_parent_admins`). |
 
 ---
 
