@@ -312,6 +312,10 @@ function local_multitenancy_path_is_parent_admin(string $path): bool {
     if (preg_match('#/(?:install|upgrade)\.php$#', $path)) {
         return true;
     }
+    // Parent site web cron must never switch to a tenant via sticky cookie.
+    if (preg_match('#/admin/cron\.php$#', $path)) {
+        return true;
+    }
     // Any plugin PHP script except tenant gateway stubs under users/{code}/.
     if (preg_match('#/local/multitenancy/(?!users/)[a-zA-Z0-9_-]+\.php$#', $path)) {
         return true;

@@ -82,6 +82,12 @@ echo $OUTPUT->notification(
     'info'
 );
 echo $OUTPUT->notification(get_string('manage_upgrade_hint', 'local_multitenancy'), 'info');
+$webcronurl = new moodle_url('/local/multitenancy/cron.php');
+$admincronurl = new moodle_url('/admin/cron.php');
+echo $OUTPUT->notification(
+    get_string('manage_webcron_hint', 'local_multitenancy', $webcronurl->out(false) . ' · ' . $admincronurl->out(false)),
+    'info'
+);
 
 $addurl = new moodle_url('/local/multitenancy/edit.php');
 echo $OUTPUT->single_button($addurl, get_string('addtenant', 'local_multitenancy'), 'get');

@@ -122,7 +122,8 @@ $string['sequences_repaired'] = 'אופסו {$a} רצפי PostgreSQL שהיו מ
 $string['provision_healed'] = '{$a} דייר(ים) סומנו כהושלמו. המסד כבר היה מותקן, אבל סטטוס ההקמה נשאר «בתהליך».';
 $string['manage_upgrade_all'] = 'שדרג את כל הדיירים';
 $string['manage_upgrade_queued'] = 'תוזמן שדרוג אוטומטי ל־{$a} דייר(ים). הריצו cron (או המתינו למשימה המתוזמנת) כדי להחיל.';
-$string['manage_upgrade_hint'] = 'אחרי עדכון קוד/תוספים באב, מסדי הדיירים משודרגים ע״י cron הראשי (php admin/cli/cron.php → משימת sync_parent_admins, כל 5 דקות). בדיירים אין מסך שדרוג. ידני: php local/multitenancy/cli/upgrade_tenants.php --run';
+$string['manage_upgrade_hint'] = 'אחרי עדכון קוד/תוספים באב, מסדי הדיירים משודרגים ע״י cron הראשי (כל 5 דקות). אפשר גם מ־Web: /admin/cron.php?password=… או /local/multitenancy/cron.php?password=… (אותה סיסמת cronremotepassword). בדיירים אין מסך שדרוג. ידני: php local/multitenancy/cli/upgrade_tenants.php --run';
+$string['manage_webcron_hint'] = 'הרצת משימות התוסף מ־Web (סיסמת cron של האתר): {$a}';
 $string['tenantprovisionqueued'] = 'הדייר "{$a}" נשמר. ההקמה (מסד וקבצים) רצה ברקע — רענן את רשימת הדיירים בעוד מספר דקות. אל תפתח את ה־gateway עד שהסטטוס «הושלם».';
 $string['columnprovision'] = 'הקמה';
 $string['provisionstatus_pending'] = 'בתור';

@@ -141,7 +141,23 @@ local_multitenancy_bootstrap($CFG);
 
 הסנכרון הזה מתבצע גם אוטומטית בכל הקמת דייר חדש (מיד לאחר אתחול ה־DB), **ללא תלות** באפשרות "העתקת קורסים ונתוני קורסים". כלומר דייר חדש מקבל את כל הגדרות האתר וחבילות השפה של האב, גם כשלא מעתיקים קורסים.
 
-הפעלה ידנית:
+### הרצה מ־Web (אותה סיסמת cron של Moodle)
+
+הגדירו סיסמה ב־**ניהול האתר → שרת → נתיבי מערכת** (`cronremotepassword`), וודאו ש־«הרץ cron רק מ־CLI» (`cronclionly`) כבוי.
+
+כל משימות התוסף (מתוזמנות + adhoc של הקמה/שדרוג) רצות גם דרך:
+
+```text
+https://your-moodle-site/admin/cron.php?password=opensesame
+```
+
+או ישירות (תמיד מריץ את משימות `local_multitenancy`, גם אם עדיין לא «הגיע הזמן»):
+
+```text
+https://your-moodle-site/local/multitenancy/cron.php?password=opensesame
+```
+
+הפעלה מ־CLI:
 
 ```bash
 php admin/cli/cron.php

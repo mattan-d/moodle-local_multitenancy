@@ -40,6 +40,11 @@ class sync_parent_admins extends \core\task\scheduled_task {
     public function execute() {
         global $CFG;
 
+        // Web cron (admin/cron.php?password=…) and the plugin cron URL can take a long time
+        // when provisioning or running every tenant's cron.php.
+        @set_time_limit(0);
+        raise_memory_limit(MEMORY_EXTRA);
+
         // Only the parent (hub) site owns the tenant list; tenant DBs contain a cloned
         // copy of it, so running this from a tenant cron would sync in the wrong direction.
         require_once($CFG->dirroot . '/local/multitenancy/lib.php');

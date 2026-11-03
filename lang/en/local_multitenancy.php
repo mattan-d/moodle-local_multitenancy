@@ -122,7 +122,8 @@ $string['sequences_repaired'] = 'Reset {$a} PostgreSQL sequence(s) that were beh
 $string['provision_healed'] = 'Marked {$a} tenant(s) complete. The database was already installed but provisioning had stayed on “processing”.';
 $string['manage_upgrade_all'] = 'Upgrade all tenants';
 $string['manage_upgrade_queued'] = 'Queued automatic Moodle upgrade for {$a} tenant(s). Run cron (or wait for scheduled task) to apply.';
-$string['manage_upgrade_hint'] = 'After updating Moodle code/plugins on the parent, tenant DBs are upgraded by the main cron (php admin/cli/cron.php → task sync_parent_admins, every 5 minutes). Tenants do not use the admin upgrade page. Manual: php local/multitenancy/cli/upgrade_tenants.php --run';
+$string['manage_upgrade_hint'] = 'After updating Moodle code/plugins on the parent, tenant DBs are upgraded by the main cron (every 5 minutes). Also via Web: /admin/cron.php?password=… or /local/multitenancy/cron.php?password=… (same cronremotepassword). Tenants do not use the admin upgrade page. Manual: php local/multitenancy/cli/upgrade_tenants.php --run';
+$string['manage_webcron_hint'] = 'Run plugin tasks via Web (site cron password): {$a}';
 $string['tenantprovisionqueued'] = 'Tenant "{$a}" was saved. Provisioning (database, files) runs in the background — refresh the tenant list in a few minutes. Do not open the tenant gateway until status is Complete.';
 $string['columnprovision'] = 'Provisioning';
 $string['provisionstatus_pending'] = 'Queued';

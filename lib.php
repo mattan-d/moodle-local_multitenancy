@@ -78,6 +78,14 @@ function local_multitenancy_active_tenant_shortcode(): string {
 function local_multitenancy_is_tenant_context(): bool {
     global $CFG;
 
+    // CLI / web-emulated cron (admin/cron.php, local/multitenancy/cron.php): only MOODLE_TENANT
+    // switches context. Ignore sticky browser cookies so parent cron never skips.
+    $iscli = (defined('CLI_SCRIPT') && CLI_SCRIPT) || (PHP_SAPI === 'cli');
+    if ($iscli) {
+        $code = getenv('MOODLE_TENANT');
+        return is_string($code) && $code !== '' && (bool) preg_match('/^[a-zA-Z0-9_-]+$/', $code);
+    }
+
     if (local_multitenancy_active_tenant_shortcode() !== '') {
         return true;
     }
