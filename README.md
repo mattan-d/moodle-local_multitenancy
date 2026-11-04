@@ -256,6 +256,7 @@ php local/multitenancy/cli/upgrade_tenants.php --run
 | `PostgreSQL connection has already been closed` אחרי TEMPLATE | `CREATE DATABASE WITH TEMPLATE` מנתק את חיבור האב. אחרי פריסה הריצו שוב את `sync_parent_admins`: החיבור נפתח מחדש, ודייר שהמסד שלו כבר מותקן מסומן כהושלם. |
 | `alreadylinked` בהתחברות OAuth לדייר | קישור SSO הועתק מהאב ומצביע על משתמש שכבר לא קיים. cron מוחק קישורים כאלה. אפשר גם למחוק ידנית את השורה ב־`mdl_auth_oauth2_linked_login` של הדייר ולהיכנס שוב. |
 | שכפול קורס נשאר «ממתין ל־cron» | השכפול הוא משימת רקע במסד **הדייר**. cron של האב מריץ עכשיו גם את cron של הדייר. אחרי פריסה: `php admin/cli/cron.php` על האב (או המשימה `sync_parent_admins`). |
+| `command line scripts can not be executed from the web interface` ב־cron דייר | הרצת web cron העבירה לילד `REMOTE_ADDR`. אחרי עדכון, סביבת התהליך לדייר היא CLI נקייה בלבד. |
 
 ---
 

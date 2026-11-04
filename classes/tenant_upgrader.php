@@ -388,26 +388,33 @@ class tenant_upgrader {
     }
 
     /**
+     * Environment for a tenant subprocess (upgrade.php / cron.php).
+     *
+     * Must not inherit web CGI keys from a parent web cron request. Moodle CLI
+     * aborts with "command line scripts can not be executed from the web
+     * interface" when REMOTE_ADDR / GATEWAY_INTERFACE / REQUEST_* are set.
+     *
      * @param string $shortcode
      * @return array<string, string>
      */
     public static function build_process_env(string $shortcode): array {
         $env = [];
-        foreach ($_SERVER as $key => $value) {
-            if (is_string($key) && is_string($value) && preg_match('/^[A-Z_][A-Z0-9_]*$/', $key)) {
-                $env[$key] = $value;
-            }
-        }
-        // Prefer real environment when available.
-        if (function_exists('getenv')) {
-            foreach (['PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'TMPDIR', 'TMP', 'TEMP'] as $key) {
-                $v = getenv($key);
-                if (is_string($v) && $v !== '') {
-                    $env[$key] = $v;
-                }
+        $keep = [
+            'PATH', 'HOME', 'USER', 'USERNAME', 'LOGNAME',
+            'LANG', 'LC_ALL', 'LC_CTYPE', 'LC_MESSAGES',
+            'TMPDIR', 'TMP', 'TEMP',
+            'SystemRoot', 'ComSpec', 'PATHEXT', 'WINDIR',
+            'PHP_BINARY', 'PHPRC', 'PHP_INI_SCAN_DIR',
+        ];
+        foreach ($keep as $key) {
+            $v = getenv($key);
+            if (is_string($v) && $v !== '') {
+                $env[$key] = $v;
             }
         }
         $env['MOODLE_TENANT'] = $shortcode;
+        // Do not set REMOTE_ADDR (even to ''). Moodle treats isset($_SERVER['REMOTE_ADDR'])
+        // as "this is a web request" and aborts CLI scripts.
         return $env;
     }
 }
